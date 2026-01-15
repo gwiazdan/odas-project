@@ -1,0 +1,64 @@
+[project]
+name = "secure-message-backend"
+version = "0.1.0"
+description = "SecureMessage backend API"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "bcrypt>=5.0.0",
+    "cryptography>=46.0.3",
+    "fastapi[standard]>=0.128.0",
+    "passlib>=1.7.4",
+    "python-jose>=3.5.0",
+    "sqlmodel>=0.0.31",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.3",
+    "mypy>=1.8.0",
+    "ruff>=0.2.2",
+    "prek>=0.2.24",
+    "types-passlib>=1.7.7.20240106",
+    "coverage>=7.4.3",
+]
+
+[tool.mypy]
+strict = true
+exclude = [".venv"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG001", # unused arguments in functions
+    "T201",   # print statements are not allowed
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "W191",  # indentation contains tabs
+    "B904",  # Allow raising exceptions without from e, for HTTPException
+]
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.coverage.run]
+source = ["app"]
+dynamic_context = "test_function"
+
+
+[tool.coverage.report]
+show_missing = true
+sort = "-Cover"
+
+[tool.coverage.html]
+show_contexts = true
