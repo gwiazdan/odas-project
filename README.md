@@ -1,5 +1,5 @@
 <h1 align="center">
-📫 SecureMessage App 
+📫 SafeMessage App
 </h1>
 
 <div align="center">
