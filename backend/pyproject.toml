@@ -9,6 +9,7 @@ dependencies = [
     "fastapi[standard]>=0.128.0",
     "passlib>=1.7.4",
     "python-jose>=3.5.0",
+    "slowapi>=0.1.9",
     "sqlmodel>=0.0.31",
 ]
 

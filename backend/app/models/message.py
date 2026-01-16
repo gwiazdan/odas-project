@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -18,7 +18,7 @@ class Message(MessageBase, table=True):
     sender_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     recipient_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     is_read: bool = False
-    created_at: datetime = Field(default_factory=datetime.timezone.utc.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     read_at: datetime | None = None
 
 
