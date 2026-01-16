@@ -2,78 +2,56 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useUserContext } from '@/context/UserContext';
+import { sanitizeInput } from '@/lib/security';
 
-interface User {
-  id: string;
-  email: string;
+interface Message {
+  id: number;
+  sender_id: number;
+  sender: {
+    id: number;
+    first_name: string;
+    last_name: string;
+    email: string;
+  };
+  subject: string;
+  is_read: boolean;
+  created_at: string;
 }
 
-export default function DashboardPage() {
+export default function InboxPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user } = useUserContext();
+  const [showWelcome, setShowWelcome] = useState(true);
 
   useEffect(() => {
-    // Check if user is authenticated
-    const checkAuth = async () => {
-      try {
-        const response = await fetch('/api/auth/me');
-        if (!response.ok) {
-          router.push('/login');
-          return;
-        }
-        const data = await response.json();
-        setUser(data);
-      } catch (err) {
-        router.push('/login');
-      } finally {
-        setLoading(false);
-      }
-    };
+    // Hide welcome message after 5 seconds
+    const timer = setTimeout(() => {
+      setShowWelcome(false);
+    }, 5000);
 
-    checkAuth();
-  }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      router.push('/auth/login');
-    } catch (err) {
-      console.error('Logout failed:', err);
-    }
-  };
-
-  if (loading) {
-    return <div>Loading...</div>;
-  }
+    return () => clearTimeout(timer);
+  }, []);
 
   if (!user) {
-    return <div>Redirecting...</div>;
+    return <div className="p-8">Loading...</div>;
   }
 
   return (
-    <div>
-      <h1>Dashboard</h1>
-      <div>
-        <p>Welcome, {user.email}</p>
-        <p>User ID: {user.id}</p>
+    <div className="p-8">
+      <h1 className="text-3xl font-bold mb-6 tracking-wider">Inbox</h1>
+
+      {showWelcome && (
+        <div className="bg-green-900 border border-green-700 text-green-100 px-4 py-3 rounded mb-6 animate-pulse">
+          <p className="font-semibold">Welcome, {sanitizeInput(`${user.first_name} ${user.last_name}`)}!</p>
+          <p className="text-sm text-green-200">{sanitizeInput(user.email)}</p>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <h2 className="text-xl font-bold text-white mb-4">Messages (0)</h2>
+        <p className="text-gray-400">No messages yet</p>
       </div>
-
-      <nav>
-        <ul>
-          <li>
-            <a href="/dashboard">Home</a>
-          </li>
-          <li>
-            <a href="/dashboard/profile">Profile</a>
-          </li>
-          <li>
-            <a href="/dashboard/settings">Settings</a>
-          </li>
-        </ul>
-      </nav>
-
-      <button onClick={handleLogout}>Logout</button>
     </div>
   );
 }

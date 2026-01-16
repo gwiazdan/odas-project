@@ -4,9 +4,12 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { sanitizeInput, isValidEmail } from '@/lib/security';
+import { decryptPrivateKey } from '@/lib/crypto';
+import { useCryptoContext } from '@/context/CryptoContext';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { setDecryptedPrivateKey } = useCryptoContext();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -49,11 +52,12 @@ export default function LoginPage() {
 
     try {
       const sanitizedEmail = sanitizeInput(email.trim().toLowerCase());
-      const response = await fetch('/api/v1/auth/login', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Include cookies
         body: JSON.stringify({
           email: sanitizedEmail,
           password: password,
@@ -75,16 +79,27 @@ export default function LoginPage() {
 
       const data = await response.json();
 
-      // Store token securely
-      if (data.access_token) {
-        localStorage.setItem('access_token', data.access_token);
-        localStorage.setItem('token_type', data.token_type);
+      // Decrypt private key locally with password
+      try {
+        if (data.encrypted_private_key && data.pbkdf2_salt) {
+          const decrypted = await decryptPrivateKey(
+            data.encrypted_private_key,
+            data.pbkdf2_salt,
+            password,
+          );
+          setDecryptedPrivateKey(decrypted);
+        }
+      } catch (decryptErr) {
+        console.warn('Failed to decrypt private key:', decryptErr);
+        // Still proceed to inbox - key can be recovered later
       }
 
+      // Session cookie jest ustawiana automatycznie (httpOnly)
       // Redirect to inbox on success
       router.push('/inbox');
-    } catch {
+    } catch (err) {
       setError('An error occurred. Please try again.');
+      console.error('Login error:', err);
     } finally {
       setLoading(false);
     }

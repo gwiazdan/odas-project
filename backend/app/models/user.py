@@ -19,10 +19,17 @@ class UserBase(SQLModel):
 
 
 class User(UserBase, table=True):
-    """User database model."""
+    """User database model with RSA key support."""
 
     id: int | None = Field(default=None, primary_key=True)
-    hashed_password: str
+    hashed_password: str  # Argon2id
+
+    # RSA Key Management
+    public_key: str  # PEM format (public key for recipients to encrypt messages)
+    encrypted_private_key: str  # PBKDF2 encrypted private key (base64)
+    pbkdf2_salt: str  # Salt for PBKDF2 (base64)
+
+    # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -37,6 +44,7 @@ class UserCreate(SQLModel):
 
 
 class UserRead(UserBase):
-    """User read schema."""
+    """User read schema - includes public key for encryption."""
 
-    pass
+    id: int
+    public_key: str

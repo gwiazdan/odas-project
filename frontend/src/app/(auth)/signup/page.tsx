@@ -3,17 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { sanitizeInput, isValidEmail, isValidPassword, isValidName, passwordsMatch } from '@/lib/security';
 import { PasswordStrengthIndicator } from '@/components/PasswordStrengthIndicator';
-import {
-  sanitizeInput,
-  isValidEmail,
-  isValidPassword,
-  isValidName,
-  passwordsMatch,
-} from '@/lib/security';
+import { decryptPrivateKey } from '@/lib/crypto';
+import { useCryptoContext } from '@/context/CryptoContext';
 
 export default function SignupPage() {
   const router = useRouter();
+  const { setDecryptedPrivateKey } = useCryptoContext();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -91,11 +88,12 @@ export default function SignupPage() {
         password: password,
       };
 
-      const response = await fetch('/api/v1/auth/signup', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/signup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify(sanitizedData),
       });
 
@@ -103,6 +101,22 @@ export default function SignupPage() {
         const data = await response.json();
         setError(data.detail || 'Signup failed. Please try again.');
         return;
+      }
+
+      const data = await response.json();
+
+      // Decrypt private key locally with password
+      try {
+        if (data.encrypted_private_key && data.pbkdf2_salt) {
+          const decrypted = await decryptPrivateKey(
+            data.encrypted_private_key,
+            data.pbkdf2_salt,
+            password,
+          );
+          setDecryptedPrivateKey(decrypted);
+        }
+      } catch (decryptErr) {
+        console.warn('Failed to decrypt private key:', decryptErr);
       }
 
       // Redirect to login on success

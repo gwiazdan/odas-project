@@ -4,7 +4,9 @@ import Link from "next/link";
 import Image from "next/image";
 import "./globals.css";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { CryptoProvider } from "@/context/CryptoContext";
+import { UserProvider, useUserContext } from "@/context/UserContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,9 +25,45 @@ export default function RootLayout({
 }>) {
   const pathname = usePathname();
   const isAuth = pathname.startsWith('/login') || pathname.startsWith('/signup');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  if (isAuth) return <html lang="en"><body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body></html>;
+  if (isAuth) return <html lang="en"><body className={`${geistSans.variable} ${geistMono.variable}`}><CryptoProvider><UserProvider>{children}</UserProvider></CryptoProvider></body></html>;
+
+  return (
+    <CryptoProvider>
+      <UserProvider>
+        <LayoutContent>{children}</LayoutContent>
+      </UserProvider>
+    </CryptoProvider>
+  );
+}
+
+function LayoutContent({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isAuth = pathname.startsWith('/login') || pathname.startsWith('/signup');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { user, setUser } = useUserContext();
+
+  useEffect(() => {
+    // Fetch user data from session
+    const fetchUser = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch user:', err);
+      }
+    };
+
+    if (!isAuth) {
+      fetchUser();
+    }
+  }, [isAuth, setUser]);
 
   return (
     <html lang="en">
@@ -61,14 +99,63 @@ export default function RootLayout({
               <div className="flex items-center lg:order-2">
                 <button
                   type="button"
-                  className="flex mx-3 text-sm bg-gray-800 rounded-full md:mr-0 focus:ring-4 focus:ring-gray-300"
-                  onClick={() => {
-                    fetch('/api/auth/logout', { method: 'POST' });
-                    window.location.href = '/login';
-                  }}
+                  className="flex mx-3 text-sm rounded-full md:mr-0 relative cursor-pointer"
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
                 >
                   <span className="sr-only">User menu</span>
-                  <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-white text-xs font-semibold">U</div>
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold bg-neutral-900">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" viewBox="0 0 32 32">
+                      <circle cx="16" cy="8" r="7" fill="currentColor"/>
+                      <path d="M28 31a12 12 0 0 0-24 0Z" fill="currentColor"/>
+                    </svg>
+                  </div>
+
+                  {/* Dropdown Menu */}
+                  {userMenuOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-background rounded-lg shadow-lg border border-gray-700 z-50">
+                      <div className="px-4 py-2 border-b border-gray-700 flex gap-2">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold bg-neutral-900">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" viewBox="0 0 32 32">
+                            <circle cx="16" cy="8" r="7" fill="currentColor"/>
+                            <path d="M28 31a12 12 0 0 0-24 0Z" fill="currentColor"/>
+                          </svg>
+                        </div>
+                        <div className="flex flex-col">
+                          <p className="text-white text-start text-sm font-semibold">{user ? `${user.first_name} ${user.last_name}` : 'User'}</p>
+                          <p className="text-gray-400 text-xs">{user ? user.email : 'Loading...'}</p>
+                        </div>
+                      </div>
+                      <div
+                        onClick={async () => {
+                          try {
+                            await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`, {
+                              method: 'POST',
+                              credentials: 'include',
+                            });
+                          } catch (err) {
+                            console.error('Logout failed:', err);
+                          }
+                          window.location.href = '/login';
+                        }}
+                        className="flex w-full text-left px-4 py-2 hover:bg-neutral-800 transition cursor-pointer gap-2 block"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            (e.target as HTMLDivElement).click();
+                          }
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M21 12L13 12" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M18 15L20.913 12.087V12.087C20.961 12.039 20.961 11.961 20.913 11.913V11.913L18 9" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M16 5V4.5V4.5C16 3.67157 15.3284 3 14.5 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H14.5C15.3284 21 16 20.3284 16 19.5V19.5V19" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        Logout
+                      </div>
+                    </div>
+                  )}
                 </button>
               </div>
             </div>

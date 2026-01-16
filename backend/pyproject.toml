@@ -4,13 +4,11 @@ version = "0.1.0"
 description = "SecureMessage backend API"
 requires-python = ">=3.10,<4.0"
 dependencies = [
-    "bcrypt>=5.0.0",
+    "argon2-cffi>=23.1.0",
     "cryptography>=46.0.3",
     "fastapi[standard]>=0.128.0",
-    "passlib>=1.7.4",
-    "python-jose>=3.5.0",
-    "slowapi>=0.1.9",
     "sqlmodel>=0.0.31",
+    "python-multipart>=0.0.6",
 ]
 
 [dependency-groups]
