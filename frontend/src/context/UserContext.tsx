@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode } from 'react';
+import { useCryptoContext } from './CryptoContext';
 
 interface User {
   id: number;
@@ -13,18 +14,29 @@ interface User {
 interface UserContextType {
   user: User | null;
   setUser: (user: User | null) => void;
+  logout: () => void;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
-export function UserProvider({ children }: { children: ReactNode }) {
+function UserProviderContent({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const { clearKeys } = useCryptoContext();
+
+  const logout = async () => {
+    setUser(null);
+    await clearKeys();
+  };
 
   return (
-    <UserContext.Provider value={{ user, setUser }}>
+    <UserContext.Provider value={{ user, setUser, logout }}>
       {children}
     </UserContext.Provider>
   );
+}
+
+export function UserProvider({ children }: { children: ReactNode }) {
+  return <UserProviderContent>{children}</UserProviderContent>;
 }
 
 export function useUserContext() {

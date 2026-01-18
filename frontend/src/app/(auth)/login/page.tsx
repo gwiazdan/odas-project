@@ -4,12 +4,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { sanitizeInput, isValidEmail } from '@/lib/security';
-import { decryptPrivateKey } from '@/lib/crypto';
+import { decryptPrivateKey, validatePrivateKey } from '@/lib/crypto';
 import { useCryptoContext } from '@/context/CryptoContext';
+import { useUserContext } from '@/context/UserContext';
 
 export default function LoginPage() {
   const router = useRouter();
   const { setDecryptedPrivateKey } = useCryptoContext();
+  const { setUser } = useUserContext();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -57,7 +59,7 @@ export default function LoginPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include', // Include cookies
+        credentials: 'include',
         body: JSON.stringify({
           email: sanitizedEmail,
           password: password,
@@ -67,11 +69,9 @@ export default function LoginPage() {
       if (!response.ok) {
         const data = await response.json();
 
-        // Handle rate limiting
         if (response.status === 429) {
           setError('Too many login attempts. Please try again later.');
         } else {
-          // Generic error message for security
           setError(data.detail || 'Login failed. Please try again.');
         }
         return;
@@ -79,23 +79,45 @@ export default function LoginPage() {
 
       const data = await response.json();
 
-      // Decrypt private key locally with password
+      setUser({
+        id: data.id,
+        email: data.email,
+        first_name: data.first_name,
+        last_name: data.last_name,
+        public_key: data.public_key,
+      });
+
       try {
-        if (data.encrypted_private_key && data.pbkdf2_salt) {
-          const decrypted = await decryptPrivateKey(
-            data.encrypted_private_key,
-            data.pbkdf2_salt,
-            password,
-          );
-          setDecryptedPrivateKey(decrypted);
+        if (!data.encrypted_private_key || !data.pbkdf2_salt) {
+          throw new Error('Encrypted private key not available from server');
         }
+
+        const decrypted = await decryptPrivateKey(
+          data.encrypted_private_key,
+          data.pbkdf2_salt,
+          password,
+        );
+
+        if (!decrypted) {
+          throw new Error('Failed to decrypt private key');
+        }
+
+        // Validate the decrypted private key
+        const isValid = await validatePrivateKey(decrypted);
+        if (!isValid) {
+          throw new Error('Decrypted private key is invalid or corrupted');
+        }
+
+        await setDecryptedPrivateKey(decrypted);
+
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (decryptErr) {
-        console.warn('Failed to decrypt private key:', decryptErr);
-        // Still proceed to inbox - key can be recovered later
+        console.error('Private key decryption failed:', decryptErr);
+        setError('Failed to decrypt private key. Wrong password or corrupted data.');
+        setLoading(false);
+        return;
       }
 
-      // Session cookie jest ustawiana automatycznie (httpOnly)
-      // Redirect to inbox on success
       router.push('/inbox');
     } catch (err) {
       setError('An error occurred. Please try again.');
@@ -130,7 +152,7 @@ export default function LoginPage() {
               id="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.email ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -154,7 +176,7 @@ export default function LoginPage() {
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.password ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -171,7 +193,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full text-black bg-white hover:bg-gray-200 disabled:bg-gray-400 focus:outline-none font-medium rounded-lg text-sm px-5 py-2.5 text-center transition duration-200"
+            className="w-full text-black bg-white hover:bg-gray-200 disabled:bg-gray-400 focus:outline-none font-medium rounded-lg text-sm px-5 py-2.5 text-center transition duration-200 cursor-pointer"
           >
             {loading ? 'Signing in...' : 'Sign in'}
           </button>

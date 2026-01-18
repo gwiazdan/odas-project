@@ -1,5 +1,13 @@
 """Authentication routes with session store and RSA keypair generation."""
 
+# ENDPOINTS:
+# POST   /auth/signup          - User registration with RSA keypair generation
+# POST   /auth/login           - User login with session creation
+# POST   /auth/logout          - User logout and session deletion
+# GET    /auth/me              - Get current authenticated user info
+# GET    /auth/users/search    - Search user by email to get public key
+# GET    /auth/verify-recipient - Verify recipient existence and get public key
+
 import asyncio
 import re
 from datetime import UTC, datetime
@@ -22,16 +30,10 @@ from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Constants for validation
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 NAME_REGEX = re.compile(r"^[a-zA-Z\s'-]{2,50}$")
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
-
-
-# ============================================================================
-# SCHEMAS
-# ============================================================================
 
 
 class SignupRequest(BaseModel):
@@ -80,12 +82,9 @@ class LogoutResponse(BaseModel):
     message: str
 
 
-# ============================================================================
-# VALIDATION FUNCTIONS
-# ============================================================================
-
-
-def validate_password_strength(password: str) -> None:
+def validate_password_strength(
+    password: str,
+) -> None:  # TODO: zxcbn password strength validation
     """
     Validate password meets security requirements (negative approach).
 
@@ -181,11 +180,6 @@ def validate_name(name: str, field_name: str = "Name") -> str:
     return name
 
 
-# ============================================================================
-# DEPENDENCIES
-# ============================================================================
-
-
 def get_current_user(
     request: Request,
     db_session: Session = Depends(get_db_session),
@@ -219,11 +213,6 @@ def get_current_user(
         )
 
     return user
-
-
-# ============================================================================
-# ENDPOINTS
-# ============================================================================
 
 
 @router.post(
@@ -317,7 +306,7 @@ async def login(
 
     RateLimiter.record_attempt(email)
 
-    # Artificial delay to slow brute-force (100-300ms)
+    # Artificial delay to slow brute-force
     await asyncio.sleep(0.1 + (hash(email) % 200) / 1000)
 
     # Fetch user
@@ -328,7 +317,7 @@ async def login(
     except Exception:
         pass
 
-    # Verify password (constant-time comparison)
+    # Verify password
     password_valid = False
     if user:
         password_valid = verify_password(login_request.password, user.hashed_password)
@@ -346,7 +335,6 @@ async def login(
             detail="Account inactive",
         )
 
-    # Create session
     session_id = create_session(
         user_id=user.id,
         ip_address=request.client.host if request.client else None,
@@ -358,7 +346,7 @@ async def login(
         key=settings.SESSION_COOKIE_NAME,
         value=session_id,
         httponly=True,
-        secure=True,  # HTTPS only in production
+        secure=True,
         samesite="lax",
         max_age=settings.SESSION_TIMEOUT_MINUTES * 60,
     )
@@ -386,7 +374,6 @@ def logout(
     if session_id:
         delete_session(session_id)
 
-    # Clear cookie
     response.delete_cookie(settings.SESSION_COOKIE_NAME)
 
     return LogoutResponse(message="Logged out successfully")
@@ -407,3 +394,86 @@ def get_current_user_info(
         encrypted_private_key=user.encrypted_private_key,
         pbkdf2_salt=user.pbkdf2_salt,
     )
+
+
+class UserPublicInfo(BaseModel):
+    """Public user information for finding recipients."""
+
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    public_key: str
+
+
+class PublicKeyResponse(BaseModel):
+    """Minimal public key response for secure message sending."""
+
+    id: int
+    public_key: str
+
+
+@router.get("/users/search", response_model=UserPublicInfo | None)
+def search_user_by_email(
+    email: str,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_db_session),
+) -> User | None:
+    """
+    Search for user by email to get their public key for encryption.
+    Returns None if user not found or not active.
+    Rate limited to prevent enumeration attacks.
+    """
+    rate_limit_key = f"search:{current_user.id}"
+    if RateLimiter.is_rate_limited(rate_limit_key, max_attempts=20, window_seconds=60):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many search requests",
+        )
+
+    RateLimiter.record_attempt(rate_limit_key)
+
+    statement = select(User).where(User.email == email, User.is_active)
+    user = db_session.exec(statement).first()
+    return user
+
+
+@router.get("/verify-recipient", response_model=PublicKeyResponse)
+def verify_recipient_and_get_public_key(
+    email: str,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_db_session),
+) -> PublicKeyResponse:
+    """
+    Verify if recipient exists and return their id and public key for message sending.
+    Minimal information disclosure for security. Requires authentication.
+    Rate limited to prevent enumeration attacks.
+
+    Returns id and public_key if user exists and is active.
+    Returns 404 with generic message if user not found.
+    """
+    rate_limit_key = f"verify:{current_user.id}"
+    if RateLimiter.is_rate_limited(rate_limit_key, max_attempts=30, window_seconds=60):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests",
+        )
+
+    RateLimiter.record_attempt(rate_limit_key)
+
+    normalized_email = email.strip().lower() if email else ""
+
+    if not normalized_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required"
+        )
+
+    statement = select(User).where(User.email == normalized_email, User.is_active)
+    user = db_session.exec(statement).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Recipient not found"
+        )
+
+    return PublicKeyResponse(id=user.id, public_key=user.public_key)

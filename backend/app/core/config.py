@@ -18,7 +18,6 @@ class Settings(BaseSettings):
 
     API_V1_STR: str = "/api/v1"
 
-    # Session configuration
     SESSION_COOKIE_NAME: str = "sessionId"
     SESSION_TIMEOUT_MINUTES: int = 60 * 24  # 24 hours
 

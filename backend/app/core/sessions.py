@@ -4,11 +4,9 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-# In-memory session store (w produkcji: Redis)
-# Format: {session_id: SessionData}
+# In-memory session store TODO: Replace it with Redis
 _sessions: dict[str, "SessionData"] = {}
 
-# Session configuration
 SESSION_TIMEOUT_MINUTES = 60 * 24  # 24 hours
 SESSION_ID_LENGTH = 32
 

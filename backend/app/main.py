@@ -12,9 +12,22 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
 )
 
+# CORS configuration
+# When using credentials: 'include', we cannot use allow_origins=["*"]
+# We must specify concrete origins
+# TODO: CORS configuration will be rewritten and put into the config.py
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1",
+    "http://192.168.200.115:3000",
+    "http://192.168.200.133",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

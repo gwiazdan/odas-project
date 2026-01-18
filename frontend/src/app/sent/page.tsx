@@ -7,36 +7,36 @@ import { useCryptoContext } from '@/context/CryptoContext';
 import MessageViewer from '@/components/MessageViewer';
 import { decryptMessage } from '@/lib/crypto';
 
-interface InboxMessage {
+interface SentMessage {
   id: number;
-  sender_id: number;
-  sender_username: string;
+  recipient_id: number;
+  recipient_username: string;
   encrypted_payload: string;
   is_read: boolean;
   created_at: string;
 }
 
-interface DecryptedInboxMessage extends InboxMessage {
+interface DecryptedSentMessage extends SentMessage {
   subject: string;
   content_preview: string;
   has_attachments: boolean;
   attachment_count: number;
 }
 
-interface InboxResponse {
-  messages: InboxMessage[];
+interface SentResponse {
+  messages: SentMessage[];
   total: number;
   page: number;
   page_size: number;
   total_pages: number;
 }
 
-export default function InboxPage() {
+export default function SentPage() {
   const router = useRouter();
   const { user } = useUserContext();
   const { privateKeyPEM, isLoading } = useCryptoContext();
-  const [messages, setMessages] = useState<InboxMessage[]>([]);
-  const [decryptedMessages, setDecryptedMessages] = useState<DecryptedInboxMessage[]>([]);
+  const [messages, setMessages] = useState<SentMessage[]>([]);
+  const [decryptedMessages, setDecryptedMessages] = useState<DecryptedSentMessage[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -51,26 +51,28 @@ export default function InboxPage() {
     }
   }, [user, router]);
 
-  const fetchInbox = useCallback(async () => {
+  const fetchSent = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch(
-        `http://localhost:8000/api/v1/messages/inbox?page=${currentPage}&page_size=10`,
+        `http://localhost:8000/api/v1/messages/sent?page=${currentPage}&page_size=10`,
         {
           credentials: 'include',
         }
       );
 
       if (response.ok) {
-        const data: InboxResponse = await response.json();
+        const data: SentResponse = await response.json();
         setMessages(data.messages);
         setTotalPages(data.total_pages);
         setTotal(data.total);
 
+        // Decrypt messages for preview
         if (privateKeyPEM) {
           const decrypted = await Promise.all(
             data.messages.map(async (msg) => {
               try {
+                // Check if encrypted_payload exists and is not null
                 if (!msg.encrypted_payload) {
                   return {
                     ...msg,
@@ -106,7 +108,7 @@ export default function InboxPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch inbox:', error);
+      console.error('Failed to fetch sent messages:', error);
     } finally {
       setLoading(false);
     }
@@ -114,9 +116,9 @@ export default function InboxPage() {
 
   useEffect(() => {
     if (user) {
-      fetchInbox();
+      fetchSent();
     }
-  }, [currentPage, user, fetchInbox]);
+  }, [currentPage, user, fetchSent]);
 
   const toggleSelect = (id: number) => {
     const newSelected = new Set(selectedIds);
@@ -159,7 +161,7 @@ export default function InboxPage() {
 
       if (response.ok) {
         setSelectedIds(new Set());
-        fetchInbox();
+        fetchSent();
       }
     } catch (error) {
       console.error('Failed to delete messages:', error);
@@ -212,7 +214,7 @@ export default function InboxPage() {
             <div className="flex flex-col px-6 py-4 space-y-3 lg:flex-row lg:items-center lg:justify-between lg:space-y-0 lg:space-x-4 border-b border-gray-700">
               <div className="flex items-center flex-1 space-x-4">
                 <h5 className="text-xl font-semibold text-white">
-                  Inbox
+                  Sent Messages
                   <span className="ml-2 text-gray-400">({total})</span>
                 </h5>
               </div>
@@ -266,7 +268,7 @@ export default function InboxPage() {
                       Subject
                     </th>
                     <th scope="col" className="px-4 py-3">
-                      Sender
+                      Recipient
                     </th>
                     <th scope="col" className="px-4 py-3">
                       Description
@@ -283,7 +285,7 @@ export default function InboxPage() {
                   {decryptedMessages.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
-                        No messages in inbox
+                        No sent messages
                       </td>
                     </tr>
                   ) : (
@@ -291,9 +293,7 @@ export default function InboxPage() {
                       <tr
                         key={message.id}
                         onClick={() => handleRowClick(message.id)}
-                        className={`border-b border-gray-700 hover:bg-gray-700 cursor-pointer transition-colors ${
-                          !message.is_read ? 'bg-gray-800/50' : ''
-                        }`}
+                        className="border-b border-gray-700 hover:bg-gray-700 cursor-pointer transition-colors"
                       >
                         <td className="w-4 px-4 py-3">
                           <div className="flex items-center">
@@ -311,17 +311,43 @@ export default function InboxPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center">
-                            {!message.is_read && (
-                              <div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div>
+                            {message.is_read ? (
+                              <svg
+                                className="w-4 h-4 mr-2 text-green-500"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                />
+                              </svg>
+                            ) : (
+                              <svg
+                                className="w-4 h-4 mr-2 text-gray-500"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                                />
+                              </svg>
                             )}
-                            <span className={`${!message.is_read ? 'text-white font-semibold' : 'text-gray-300'}`}>
+                            <span className="text-gray-300">
                               {message.subject || '(No subject)'}
                             </span>
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`${!message.is_read ? 'text-gray-200 font-medium' : 'text-gray-400'}`}>
-                            {message.sender_username}
+                          <span className="text-gray-400">
+                            {message.recipient_username}
                           </span>
                         </td>
                         <td className="px-4 py-3 max-w-md truncate">
@@ -448,7 +474,7 @@ export default function InboxPage() {
           messageId={selectedMessage}
           onClose={() => {
             setSelectedMessage(null);
-            fetchInbox();
+            fetchSent(); // Refresh list
           }}
         />
       )}

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { sanitizeInput, isValidEmail, isValidPassword, isValidName, passwordsMatch } from '@/lib/security';
 import { PasswordStrengthIndicator } from '@/components/PasswordStrengthIndicator';
-import { decryptPrivateKey } from '@/lib/crypto';
+import { decryptPrivateKey, validatePrivateKey } from '@/lib/crypto';
 import { useCryptoContext } from '@/context/CryptoContext';
 
 export default function SignupPage() {
@@ -113,14 +113,21 @@ export default function SignupPage() {
             data.pbkdf2_salt,
             password,
           );
+
+          // Validate the decrypted private key
+          const isValid = await validatePrivateKey(decrypted);
+          if (!isValid) {
+            console.error('Invalid private key received from server');
+            setError('Registration succeeded but private key is invalid. Please contact support.');
+            return;
+          }
+
           setDecryptedPrivateKey(decrypted);
         }
       } catch (decryptErr) {
         console.warn('Failed to decrypt private key:', decryptErr);
       }
-
-      // Redirect to login on success
-      router.push('/login?registered=true');
+      router.push('/login');
     } catch {
       setError('An error occurred. Please try again.');
     } finally {
@@ -153,7 +160,7 @@ export default function SignupPage() {
               id="firstName"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.firstName ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -177,7 +184,7 @@ export default function SignupPage() {
               id="lastName"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.lastName ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -201,7 +208,7 @@ export default function SignupPage() {
               id="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.email ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -225,7 +232,7 @@ export default function SignupPage() {
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.password ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
@@ -250,7 +257,7 @@ export default function SignupPage() {
               id="confirmPassword"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className={`bg-neutral-800 border ${
                 validationErrors.confirmPassword ? 'border-red-500' : 'border-gray-800'
               } text-white rounded-lg focus:border-white block w-full p-2.5 placeholder-gray-400 outline-none transition`}
