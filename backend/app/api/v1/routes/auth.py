@@ -13,7 +13,7 @@ import hashlib
 import json
 import secrets
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pyotp
 import regex
@@ -411,8 +411,8 @@ def signup(
         public_key=public_key_pem,
         encrypted_private_key=encrypted_private_key,
         pbkdf2_salt=pbkdf2_salt,
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
     db_session.add(db_user)
@@ -669,7 +669,7 @@ def activate_2fa(
     current_user.totp_secret = activate_request.temp_secret
     current_user.is_2fa_enabled = True
     _save_backup_codes(current_user, hashed_codes)
-    current_user.updated_at = datetime.now(UTC)
+    current_user.updated_at = datetime.now(timezone.utc)
 
     db_session.add(current_user)
     db_session.commit()
@@ -708,7 +708,7 @@ def disable_2fa(
     current_user.is_2fa_enabled = False
     current_user.totp_secret = None
     current_user.backup_codes = None
-    current_user.updated_at = datetime.now(UTC)
+    current_user.updated_at = datetime.now(timezone.utc)
 
     db_session.add(current_user)
     db_session.commit()

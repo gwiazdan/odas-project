@@ -1,5 +1,5 @@
-# Use Python 3.10 slim image as base
-FROM python:3.10-slim
+# Use Python 3.13 slim image as base
+FROM python:3.13-slim
 
 # Prevent Python from writing pyc files and buffering stdout/stderr
 ENV PYTHONUNBUFFERED=1

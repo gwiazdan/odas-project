@@ -52,8 +52,6 @@ function LayoutWrapper({ children }: { children: React.ReactNode }) {
 
 function LayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuth = pathname.startsWith('/login') || pathname.startsWith('/signup');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [twoFactorSetupOpen, setTwoFactorSetupOpen] = useState(false);
@@ -90,7 +88,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         console.error('Failed to fetch user:', err);
-        // Network error or CORS issue - don't crash the app
       }
     };
 
@@ -104,24 +101,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       <nav className="bg-white border-b border-gray-800 px-4 py-2.5 fixed left-0 right-0 top-0 z-50 bg-background">
             <div className="flex flex-wrap justify-between items-center">
               <div className="flex justify-start items-center">
-                <button
-                  onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className="p-2 mr-2 text-gray-600 rounded-lg cursor-pointer md:hidden hover:text-gray-900 hover:bg-gray-100 focus:bg-gray-100 focus:ring-2 focus:ring-gray-100"
-                >
-                  <svg
-                    aria-hidden="true"
-                    className="w-6 h-6"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-                      clipRule="evenodd"
-                    ></path>
-                  </svg>
-                </button>
                 <Link href="/inbox" className="flex items-center gap-2 mr-4">
                   <Image src="/mailbox.svg" alt="Logo" width={32} height={32} />
                   <span className="self-center text-2xl font-semibold whitespace-nowrap">SafeMessage</span>
@@ -214,9 +193,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
           {/* Sidebar */}
           <aside
-            className={`fixed top-0 left-0 z-40 w-64 h-screen pt-14 transition-transform ${
-              sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-            } border-r border-gray-800 md:translate-x-0`}
+            className={`fixed top-0 left-0 z-40 w-64 h-screen pt-14 transition-transform  translate-x-0'
+            border-r border-gray-800 md:translate-x-0`}
             aria-label="Sidenav"
           >
             <div className="overflow-y-auto py-5 px-3 h-full bg-neutral flex flex-col">

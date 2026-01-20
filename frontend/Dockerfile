@@ -1,21 +1,44 @@
-FROM node:24 AS build-stage
+FROM node:24 AS deps
 
 WORKDIR /app
 
-COPY package*.json /app/
+COPY package*.json ./
 
-RUN npm install
+RUN npm ci --include=dev
 
-COPY ./ /app/
+FROM node:24 AS builder
 
-ARG VITE_API_URL=${VITE_API_URL}
+WORKDIR /app
 
-RUN npm run build
+ARG NEXT_PUBLIC_API_URL
 
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-FROM nginx:1
+COPY --from=deps /app/node_modules ./node_modules
 
-COPY --from=build-stage /app/dist/ /usr/share/nginx/html
+COPY . .
 
-COPY ./nginx.conf /etc/nginx/conf.d/default.conf
-COPY ./nginx-backend-not-found.conf /etc/nginx/extra-conf.d/backend-not-found.conf
+RUN npm run build && npm prune --omit=dev
+
+FROM node:24 AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+ARG NEXT_PUBLIC_API_URL
+
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+COPY --from=builder /app/.next ./.next
+
+COPY --from=builder /app/public ./public
+
+COPY --from=builder /app/package.json ./package.json
+
+COPY --from=builder /app/package-lock.json ./package-lock.json
+
+COPY --from=builder /app/node_modules ./node_modules
+
+EXPOSE 3000
+CMD ["npm", "run", "start"]

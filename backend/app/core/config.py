@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     )
 
     PROJECT_NAME: str = "SecureMessage"
-    PROJECT_VERSION: str = "0.1.0"
+    PROJECT_VERSION: str = "1.0.0"
     DESCRIPTION: str = "Backend API for SecureMessage application"
 
     DATABASE_URI: str = "sqlite:///./app.db"
@@ -22,10 +22,20 @@ class Settings(BaseSettings):
     TOTP_DIGITS: int = 6
     TOTP_BACKUP_CODES_COUNT: int = 5
 
+    # Endpoints
     API_V1_STR: str = "/api/v1"
+
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     SESSION_COOKIE_NAME: str = "sessionId"
     SESSION_TIMEOUT_MINUTES: int = 60 * 24  # 24 hours
+
+    # CORS Settings
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    ALLOW_CREDENTIALS: bool = True
+    ALLOW_METHODS: list[str] = ["*"]
+    ALLOW_HEADERS: list[str] = ["*"]
 
 
 settings = Settings()

@@ -1,9 +1,13 @@
-"""Session management - Redis-backed session store with in-memory fallback."""
+"""Session management - Redis-backed session store (no in-memory fallback)."""
+
+from __future__ import annotations
 
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+from app.core.logger import logger
 
 try:
     import redis
@@ -12,11 +16,8 @@ try:
 except ImportError:
     REDIS_AVAILABLE = False
 
-# Redis client - will be initialized in init_redis()
+
 redis_client: redis.Redis | None = None
-# In-memory fallback store
-_sessions: dict[str, "SessionData"] = {}
-USE_REDIS = False
 
 SESSION_TIMEOUT_MINUTES = 60 * 24  # 24 hours
 SESSION_ID_LENGTH = 32
@@ -57,33 +58,30 @@ class SessionData:
     def is_expired(self) -> bool:
         """Check if session has expired."""
         expiry_time = self.created_at + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
-        return datetime.now(UTC) > expiry_time
+        return datetime.now(timezone.utc) > expiry_time
 
     def update_activity(self) -> None:
         """Update last activity timestamp."""
-        self.last_activity = datetime.now(UTC)
+        self.last_activity = datetime.now(timezone.utc)
 
 
 def init_redis(url: str = "redis://localhost:6379/0") -> None:
-    """Initialize Redis connection. Falls back to in-memory if unavailable."""
-    global redis_client, USE_REDIS
+    """Initialize Redis connection. App fails to start if Redis is unavailable."""
+    global redis_client
 
     if not REDIS_AVAILABLE:
-        print("Redis library not installed, using in-memory session store")
-        USE_REDIS = False
-        return
+        raise RuntimeError("Redis library is not installed; cannot manage sessions")
 
     try:
         redis_client = redis.from_url(url, decode_responses=True)
-        # Test connection
         redis_client.ping()
-        USE_REDIS = True
-        print("Connected to Redis for session management")
-    except Exception as e:
-        print(f"Could not connect to Redis ({url}): {e}")
-        print("Falling back to in-memory session store")
+        logger.info("Connected to Redis for session management")
+    except Exception as exc:
         redis_client = None
-        USE_REDIS = False
+        logger.critical(
+            "Could not connect to Redis", extra={"redis_url": url, "error": str(exc)}
+        )
+        raise
 
 
 def create_session(
@@ -102,8 +100,11 @@ def create_session(
     Returns:
         Session ID (to be stored in httpOnly cookie)
     """
+    if not redis_client:
+        raise RuntimeError("Redis is not initialized; sessions cannot be created")
+
     session_id = secrets.token_urlsafe(SESSION_ID_LENGTH)
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
 
     session_data = SessionData(
         user_id=user_id,
@@ -113,17 +114,12 @@ def create_session(
         user_agent=user_agent,
     )
 
-    if USE_REDIS and redis_client:
-        # Store in Redis with TTL
-        ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
-        redis_client.setex(
-            REDIS_SESSION_PREFIX + session_id,
-            ttl_seconds,
-            json.dumps(session_data.to_dict()),
-        )
-    else:
-        # Use in-memory store
-        _sessions[session_id] = session_data
+    ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
+    redis_client.setex(
+        REDIS_SESSION_PREFIX + session_id,
+        ttl_seconds,
+        json.dumps(session_data.to_dict()),
+    )
 
     return session_id
 
@@ -135,42 +131,29 @@ def get_session(session_id: str) -> SessionData | None:
     Returns:
         SessionData if valid and not expired, None otherwise
     """
-    if USE_REDIS and redis_client:
-        data = redis_client.get(REDIS_SESSION_PREFIX + session_id)
+    if not redis_client:
+        raise RuntimeError("Redis is not initialized; sessions cannot be read")
 
-        if data is None:
-            return None
+    data = redis_client.get(REDIS_SESSION_PREFIX + session_id)
 
-        session_data = SessionData.from_dict(json.loads(data))
+    if data is None:
+        return None
 
-        # Check expiration
-        if session_data.is_expired():
-            delete_session(session_id)
-            return None
+    session_data = SessionData.from_dict(json.loads(data))
 
-        # Update activity and refresh TTL
-        session_data.update_activity()
-        ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
-        redis_client.setex(
-            REDIS_SESSION_PREFIX + session_id,
-            ttl_seconds,
-            json.dumps(session_data.to_dict()),
-        )
+    if session_data.is_expired():
+        delete_session(session_id)
+        return None
 
-        return session_data
-    else:
-        # Use in-memory store
-        session = _sessions.get(session_id)
+    session_data.update_activity()
+    ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
+    redis_client.setex(
+        REDIS_SESSION_PREFIX + session_id,
+        ttl_seconds,
+        json.dumps(session_data.to_dict()),
+    )
 
-        if session is None:
-            return None
-
-        if session.is_expired():
-            del _sessions[session_id]
-            return None
-
-        session.update_activity()
-        return session
+    return session_data
 
 
 def delete_session(session_id: str) -> bool:
@@ -180,14 +163,11 @@ def delete_session(session_id: str) -> bool:
     Returns:
         True if session was deleted, False if not found
     """
-    if USE_REDIS and redis_client:
-        deleted = redis_client.delete(REDIS_SESSION_PREFIX + session_id)
-        return deleted > 0
-    else:
-        if session_id in _sessions:
-            del _sessions[session_id]
-            return True
-        return False
+    if not redis_client:
+        raise RuntimeError("Redis is not initialized; sessions cannot be deleted")
+
+    deleted = redis_client.delete(REDIS_SESSION_PREFIX + session_id)
+    return deleted > 0
 
 
 def cleanup_expired_sessions() -> int:
@@ -198,14 +178,5 @@ def cleanup_expired_sessions() -> int:
     Returns:
         Number of sessions deleted
     """
-    if USE_REDIS:
-        # Redis automatically expires keys via TTL
-        return 0
-    else:
-        # In-memory cleanup
-        expired_ids = [
-            sid for sid, session in _sessions.items() if session.is_expired()
-        ]
-        for sid in expired_ids:
-            del _sessions[sid]
-        return len(expired_ids)
+    # Redis automatically expires keys via TTL
+    return 0
