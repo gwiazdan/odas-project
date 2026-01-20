@@ -21,3 +21,8 @@ def get_info():
 def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@router.get("/")
+def read_root():
+    return {"message": "SecureMessage API"}

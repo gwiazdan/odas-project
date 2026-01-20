@@ -9,6 +9,7 @@ import { CryptoProvider, useCryptoContext } from "@/context/CryptoContext";
 import { UserProvider, useUserContext } from "@/context/UserContext";
 import { sanitizeInput } from "@/lib/security";
 import ComposeMessage from "@/components/ComposeMessage";
+import TwoFactorSetup from "@/components/TwoFactorSetup";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,8 +27,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white`}>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body>
         <CryptoProvider>
           <UserProvider>
             <LayoutWrapper>{children}</LayoutWrapper>
@@ -55,6 +56,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [twoFactorSetupOpen, setTwoFactorSetupOpen] = useState(false);
   const { user, setUser } = useUserContext();
   const { privateKeyPEM } = useCryptoContext();
 
@@ -149,10 +151,30 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                             <path d="M28 31a12 12 0 0 0-24 0Z" fill="currentColor"/>
                           </svg>
                         </div>
-                        <div className="flex flex-col">
-                          <p className="text-white text-start text-sm font-semibold">{user ? `${sanitizeInput(user.first_name)} ${sanitizeInput(user.last_name)}` : 'User'}</p>
+                        <div className="flex flex-col text-start">
+                          <p className="text-white text-sm font-semibold">{user ? `${sanitizeInput(user.first_name)} ${sanitizeInput(user.last_name)}` : 'User'}</p>
                           <p className="text-gray-400 text-xs">{user ? sanitizeInput(user.email) : 'Loading...'}</p>
                         </div>
+                      </div>
+                      <div
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          setTwoFactorSetupOpen(true);
+                        }}
+                        className="flex w-full text-left px-4 py-2 hover:bg-neutral-800 transition cursor-pointer gap-2 border-b border-gray-700"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            (e.target as HTMLDivElement).click();
+                          }
+                        }}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        {user?.is_2fa_enabled ? 'Disable 2FA' : 'Enable 2FA'}
                       </div>
                       <div
                         onClick={async () => {
@@ -231,8 +253,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                         : 'hover:bg-neutral-700'
                     }`}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7 " viewBox="0 0 32 32">
-                      <path d="m19 31-6-12-12-6L31 1 19 31zm-6-12L25 7" data-name="12-sent" fill='currentColor'/>
+                    <svg className="w-7 h-7" viewBox="0 0 32 32">
+                      <path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m19 31-6-12-12-6L31 1 19 31zm-6-12L25 7"/>
                     </svg>
                     <span className="ml-3">Sent</span>
                   </Link>
@@ -249,6 +271,31 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           {/* Global Compose Modal */}
           {composeOpen && (
             <ComposeMessage onClose={() => setComposeOpen(false)} />
+          )}
+
+          {/* 2FA Setup Modal */}
+          {twoFactorSetupOpen && (
+            <TwoFactorSetup
+              onClose={() => setTwoFactorSetupOpen(false)}
+              onSuccess={() => {
+                // Refetch user to update 2FA status
+                const fetchUser = async () => {
+                  try {
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+                    const response = await fetch(`${apiUrl}/api/v1/auth/me`, {
+                      credentials: 'include',
+                    });
+                    if (response.ok) {
+                      const data = await response.json();
+                      setUser(data);
+                    }
+                  } catch (err) {
+                    console.error('Failed to fetch user:', err);
+                  }
+                };
+                fetchUser();
+              }}
+            />
           )}
         </div>
       );

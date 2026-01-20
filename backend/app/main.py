@@ -1,12 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import api_v1_router
+from app.api import api_v1_router, info_router
 from app.core.config import settings
 from app.core.db import init_db
+from app.core.sessions import init_redis
 
 # Initialize database on startup
 init_db()
+
+# Initialize Redis for session management
+try:
+    init_redis("redis://localhost:6379/0")
+except Exception as e:
+    print(f"Warning: Could not connect to Redis: {e}")
+    print("Sessions will not be persisted across restarts")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -34,8 +42,4 @@ app.add_middleware(
 )
 
 app.include_router(api_v1_router)
-
-
-@app.get("/")
-def read_root():
-    return {"message": "SecureMessage API"}
+app.include_router(info_router)

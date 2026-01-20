@@ -5,13 +5,15 @@ import { useRouter } from 'next/navigation';
 import { useUserContext } from '@/context/UserContext';
 import { useCryptoContext } from '@/context/CryptoContext';
 import MessageViewer from '@/components/MessageViewer';
-import { decryptMessage } from '@/lib/crypto';
+import { decryptMessage, verifySignature } from '@/lib/crypto';
 
 interface SentMessage {
   id: number;
   recipient_id: number;
   recipient_username: string;
   encrypted_payload: string;
+  signature: string;
+  sender_public_key: string;
   is_read: boolean;
   created_at: string;
 }
@@ -21,6 +23,7 @@ interface DecryptedSentMessage extends SentMessage {
   content_preview: string;
   has_attachments: boolean;
   attachment_count: number;
+  signature_valid: boolean | null;
 }
 
 interface SentResponse {
@@ -67,12 +70,10 @@ export default function SentPage() {
         setTotalPages(data.total_pages);
         setTotal(data.total);
 
-        // Decrypt messages for preview
         if (privateKeyPEM) {
           const decrypted = await Promise.all(
             data.messages.map(async (msg) => {
               try {
-                // Check if encrypted_payload exists and is not null
                 if (!msg.encrypted_payload) {
                   return {
                     ...msg,
@@ -80,17 +81,36 @@ export default function SentPage() {
                     content_preview: 'Message has no content',
                     has_attachments: false,
                     attachment_count: 0,
+                    signature_valid: false,
                   };
                 }
 
                 const decryptedStr = await decryptMessage(msg.encrypted_payload, privateKeyPEM);
                 const payload = JSON.parse(decryptedStr);
+
+                let signatureValid: boolean | null = null;
+                try {
+                  if (msg.signature && msg.sender_public_key) {
+                    signatureValid = await verifySignature(
+                      decryptedStr,
+                      msg.signature,
+                      msg.sender_public_key
+                    );
+                  } else {
+                    signatureValid = false;
+                  }
+                } catch (err) {
+                  console.error('Failed to verify signature:', err);
+                  signatureValid = false;
+                }
+
                 return {
                   ...msg,
                   subject: payload.subject || '(No subject)',
                   content_preview: payload.content?.substring(0, 200) || '',
                   has_attachments: payload.attachments?.length > 0 || false,
                   attachment_count: payload.attachments?.length || 0,
+                  signature_valid: signatureValid,
                 };
               } catch (err) {
                 console.error('Failed to decrypt message preview:', err);
@@ -100,6 +120,7 @@ export default function SentPage() {
                   content_preview: 'Unable to decrypt message',
                   has_attachments: false,
                   attachment_count: 0,
+                  signature_valid: false,
                 };
               }
             })
@@ -264,27 +285,18 @@ export default function SentPage() {
                         </label>
                       </div>
                     </th>
-                    <th scope="col" className="px-4 py-3">
-                      Subject
-                    </th>
-                    <th scope="col" className="px-4 py-3">
-                      Recipient
-                    </th>
-                    <th scope="col" className="px-4 py-3">
-                      Description
-                    </th>
-                    <th scope="col" className="px-4 py-3">
-                      Attachments
-                    </th>
-                    <th scope="col" className="px-4 py-3">
-                      Date
-                    </th>
+                    <th scope="col" className="px-4 py-3">Status</th>
+                    <th scope="col" className="px-4 py-3">Subject</th>
+                    <th scope="col" className="px-4 py-3">Recipient</th>
+                    <th scope="col" className="px-4 py-3">Description</th>
+                    <th scope="col" className="px-4 py-3">Attachments</th>
+                    <th scope="col" className="px-4 py-3">Date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {decryptedMessages.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                         No sent messages
                       </td>
                     </tr>
@@ -292,8 +304,13 @@ export default function SentPage() {
                     decryptedMessages.map((message) => (
                       <tr
                         key={message.id}
-                        onClick={() => handleRowClick(message.id)}
-                        className="border-b border-gray-700 hover:bg-gray-700 cursor-pointer transition-colors"
+                        onClick={() => {
+                          if (message.signature_valid === false) return;
+                          handleRowClick(message.id);
+                        }}
+                        className={`border-b border-gray-700 transition-colors ${
+                          !message.is_read ? 'bg-gray-800/50' : ''
+                        } ${message.signature_valid === false ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:bg-gray-700'}`}
                       >
                         <td className="w-4 px-4 py-3">
                           <div className="flex items-center">
@@ -308,6 +325,15 @@ export default function SentPage() {
                               className="w-4 h-4 bg-gray-700 border-gray-600 rounded text-blue-600 focus:ring-blue-500 focus:ring-2"
                             />
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {message.signature_valid === false ? (
+                            <span className="text-xs text-red-400 font-semibold">Invalid signature</span>
+                          ) : message.signature_valid === true ? (
+                            <span className="text-xs text-green-400 font-semibold">Verified</span>
+                          ) : (
+                            <span className="text-xs text-gray-500">Pending</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center">
@@ -357,7 +383,7 @@ export default function SentPage() {
                         </td>
                         <td className="px-4 py-3">
                           {message.has_attachments ? (
-                            <div className="flex items-center text-blue-400">
+                            <div className="flex items-center font-bold text-white">
                               <svg
                                 className="w-4 h-4 mr-1"
                                 fill="none"

@@ -59,7 +59,7 @@ export function isValidPassword(password: string): {
 
 // Validate name fields
 export function isValidName(name: string): boolean {
-  const nameRegex = /^[a-zA-Z\s'-]{2,50}$/;
+  const nameRegex = /^[\p{L}\s'-]{2,50}$/u;
   return nameRegex.test(name);
 }
 

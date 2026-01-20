@@ -138,6 +138,7 @@ async function importPrivateKey(pemKey: string): Promise<CryptoKey> {
 }
 
 // Encrypt message with recipient's public key and sign with sender's private key
+// Uses hybrid encryption (AES-GCM + RSA-OAEP) with gzip compression for large messages
 export async function encryptMessage(
   message: string,
   recipientPublicKeyPEM: string,
@@ -147,17 +148,64 @@ export async function encryptMessage(
   const privateKey = await importPrivateKey(senderPrivateKeyPEM);
 
   const messageBuffer = new TextEncoder().encode(message);
-  const encrypted = await window.crypto.subtle.encrypt(
+
+  const aesKey = await window.crypto.subtle.generateKey(
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  const compressionStream = new CompressionStream('gzip');
+  const writer = compressionStream.writable.getWriter();
+  writer.write(messageBuffer);
+  writer.close();
+  const compressedArrayBuffer = await new Response(compressionStream.readable).arrayBuffer();
+  const compressedData = new Uint8Array(compressedArrayBuffer);
+
+  const encryptedContent = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    aesKey,
+    compressedData
+  );
+
+  const exportedKey = await window.crypto.subtle.exportKey('raw', aesKey);
+
+  const encryptedKey = await window.crypto.subtle.encrypt(
     {
       name: 'RSA-OAEP',
     },
     publicKey,
-    messageBuffer
+    exportedKey
   );
 
-  const encryptedBase64 = btoa(
-    String.fromCharCode(...new Uint8Array(encrypted))
+  const encryptedKeyBytes = new Uint8Array(encryptedKey);
+  const ivBytes = new Uint8Array(iv);
+  const encryptedContentBytes = new Uint8Array(encryptedContent);
+
+  const combined = new Uint8Array(
+    4 + encryptedKeyBytes.length + ivBytes.length + encryptedContentBytes.length
   );
+
+  new DataView(combined.buffer).setUint32(0, encryptedKeyBytes.length, false);
+  combined.set(encryptedKeyBytes, 4);
+  combined.set(ivBytes, 4 + encryptedKeyBytes.length);
+  combined.set(encryptedContentBytes, 4 + encryptedKeyBytes.length + ivBytes.length);
+
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < combined.length; i += chunkSize) {
+    const chunk = combined.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  const encryptedBase64 = btoa(binary);
 
   const signature = await window.crypto.subtle.sign(
     {
@@ -179,6 +227,7 @@ export async function encryptMessage(
 }
 
 // Decrypt message with recipient's private key
+// Supports hybrid encryption (AES-GCM + RSA-OAEP) with gzip compression for large messages
 export async function decryptMessage(
   encryptedMessageBase64: string,
   recipientPrivateKeyPEM: string
@@ -207,6 +256,55 @@ export async function decryptMessage(
     c => c.charCodeAt(0)
   );
 
+  if (encryptedData.length > 4) {
+    const keyLength = new DataView(encryptedData.buffer, encryptedData.byteOffset).getUint32(0, false);
+
+    // If keyLength is reasonable (between 256-512 bytes for RSA-2048), assume hybrid encryption
+    if (keyLength > 200 && keyLength < 600 && encryptedData.length > keyLength + 16) {
+      const encryptedKey = encryptedData.slice(4, 4 + keyLength);
+      const iv = encryptedData.slice(4 + keyLength, 4 + keyLength + 12);
+      const encryptedContent = encryptedData.slice(4 + keyLength + 12);
+
+      const decryptedKeyBuffer = await window.crypto.subtle.decrypt(
+        {
+          name: 'RSA-OAEP',
+        },
+        privateKey,
+        encryptedKey
+      );
+
+      // Import AES key
+      const aesKey = await window.crypto.subtle.importKey(
+        'raw',
+        decryptedKeyBuffer,
+        {
+          name: 'AES-GCM',
+          length: 256,
+        },
+        false,
+        ['decrypt']
+      );
+
+      const decryptedContent = await window.crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: iv,
+        },
+        aesKey,
+        encryptedContent
+      );
+
+      const decompressionStream = new DecompressionStream('gzip');
+      const writer = decompressionStream.writable.getWriter();
+      writer.write(new Uint8Array(decryptedContent));
+      writer.close();
+      const decompressedArrayBuffer = await new Response(decompressionStream.readable).arrayBuffer();
+
+      return new TextDecoder().decode(decompressedArrayBuffer);
+    }
+  }
+
+  // Fallback to direct RSA decryption for old messages
   const decrypted = await window.crypto.subtle.decrypt(
     {
       name: 'RSA-OAEP',

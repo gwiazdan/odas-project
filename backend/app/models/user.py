@@ -28,6 +28,10 @@ class User(UserBase, table=True):
     encrypted_private_key: str  # PBKDF2 encrypted private key (base64)
     pbkdf2_salt: str  # Salt for PBKDF2 (base64)
 
+    totp_secret: str | None = None
+    is_2fa_enabled: bool = False
+    backup_codes: str | None = None  # JSON-encoded list of hashed backup codes
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

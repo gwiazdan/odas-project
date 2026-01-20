@@ -5,6 +5,7 @@ import { sanitizeInput, isValidEmail } from '@/lib/security';
 import { useCryptoContext } from '@/context/CryptoContext';
 import { useUserContext } from '@/context/UserContext';
 import { encryptMessage } from '@/lib/crypto';
+import MessageSuccessScreen from './MessageSuccessScreen';
 
 interface ComposeMessageProps {
   onClose: () => void;
@@ -20,6 +21,7 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
+  const [showSuccessScreen, setShowSuccessScreen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -106,12 +108,28 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
       const recipientId = keyData.id;
       const recipientPublicKey = keyData.public_key;
 
-      const attachmentObjects = attachments.map((file) => ({
-        filename: file.name,
-        size: file.size,
-        type: file.type,
-      }));
+      // Encode attachments to base64 first
+      const attachmentPromises = attachments.map(async (file) => {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        // Convert bytes to base64 safely for large files
+        let binary = '';
+        const chunkSize = 8192;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const chunk = bytes.subarray(i, i + chunkSize);
+          binary += String.fromCharCode(...chunk);
+        }
+        return {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          data: btoa(binary),
+        };
+      });
 
+      const attachmentObjects = await Promise.all(attachmentPromises);
+
+      // Encrypt payload WITH attachment data included
       const { encryptedMessage: encryptedForRecipient, signature } = await encryptMessage(
         JSON.stringify({
           subject: sanitizedSubject,
@@ -132,15 +150,6 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
         privateKeyPEM
       );
 
-      const attachmentPromises = attachments.map(async (file) => {
-        const buffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        const binary = String.fromCharCode(...bytes);
-        return btoa(binary);
-      });
-
-      const encodedAttachments = await Promise.all(attachmentPromises);
-
       const sendResponse = await fetch(`${apiUrl}/api/v1/messages/send`, {
         method: 'POST',
         credentials: 'include',
@@ -150,12 +159,6 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
           payload_recipient: encryptedForRecipient,
           payload_sender: encryptedForSender,
           signature,
-          attachments: attachments.map((file, index) => ({
-            filename: file.name,
-            size: file.size,
-            type: file.type,
-            data: encodedAttachments[index],
-          })),
         }),
       });
 
@@ -183,13 +186,11 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
         throw new Error(errorDetail);
       }
 
-      // Success - reset form and close
-      setRecipient('');
+      // Success - show success screen
+      setShowSuccessScreen(true);
       setSubject('');
       setContent('');
       setAttachments([]);
-      alert('Message sent');
-      onClose();
     } catch (err) {
       console.error('Error sending message:', err);
       let errorMessage = 'Error sending message';
@@ -206,28 +207,39 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
           errorMessage = JSON.stringify(err);
         }
       }
-
+      setRecipient('');
       setError(errorMessage);
     } finally {
       setIsSending(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Blurred backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
+  const handleSuccessClose = () => {
+    setShowSuccessScreen(false);
+    onClose();
+  };
 
-      {/* Modal */}
-      <div
-        className="relative bg-neutral-900 border border-gray-800 rounded-lg shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] flex flex-col"
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
+  return (
+    <>
+      <MessageSuccessScreen
+        isOpen={showSuccessScreen}
+        recipientEmail={recipient}
+        onClose={handleSuccessClose}
+      />
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        {/* Blurred backdrop */}
+        <div
+          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          onClick={onClose}
+        />
+
+        {/* Modal */}
+        <div
+          className="relative bg-neutral-900 border border-gray-800 rounded-lg shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] flex flex-col"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
           <h2 className="text-xl font-bold text-white">New Message</h2>
@@ -270,7 +282,7 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
               placeholder="email@example.com"
-              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-white"
+              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white"
             />
           </div>
 
@@ -284,7 +296,7 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Message subject"
-              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-white"
+              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white"
             />
           </div>
 
@@ -298,7 +310,7 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
               onChange={(e) => setContent(e.target.value)}
               placeholder="Type your message..."
               rows={12}
-              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-white resize-none"
+              className="w-full px-4 py-2 bg-neutral-800 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white resize-none"
             />
           </div>
 
@@ -387,7 +399,8 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
             <span>{isSending ? 'Sending...' : 'Send'}</span>
           </button>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

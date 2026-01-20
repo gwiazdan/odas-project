@@ -9,6 +9,7 @@ interface User {
   first_name: string;
   last_name: string;
   public_key: string;
+  is_2fa_enabled?: boolean;
 }
 
 interface UserContextType {

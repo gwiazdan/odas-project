@@ -16,6 +16,12 @@ class Settings(BaseSettings):
 
     DATABASE_URI: str = "sqlite:///./app.db"
 
+    # TOTP / 2FA
+    TOTP_ISSUER: str = "SecureMessage"
+    TOTP_PERIOD: int = 30
+    TOTP_DIGITS: int = 6
+    TOTP_BACKUP_CODES_COUNT: int = 5
+
     API_V1_STR: str = "/api/v1"
 
     SESSION_COOKIE_NAME: str = "sessionId"

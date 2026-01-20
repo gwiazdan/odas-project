@@ -44,7 +44,7 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
   const { privateKeyPEM } = useCryptoContext();
   const [message, setMessage] = useState<MessageData | null>(null);
   const [decryptedPayload, setDecryptedPayload] = useState<MessagePayload | null>(null);
-  const [signatureValid, setSignatureValid] = useState<boolean>(false);
+  const [signatureValid, setSignatureValid] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +52,7 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
     try {
       setLoading(true);
       setError(null);
+      setSignatureValid(null); // Reset signature state
       const response = await fetch(
         `http://localhost:8000/api/v1/messages/${messageId}`,
         {
@@ -71,15 +72,21 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
             const decrypted = JSON.parse(decryptedStr);
             setDecryptedPayload(decrypted);
 
-            const isValid = await verifySignature(
-              decryptedStr,
-              data.signature,
-              data.sender.public_key
-            );
-            setSignatureValid(isValid);
+            try {
+              const isValid = await verifySignature(
+                decryptedStr,
+                data.signature,
+                data.sender.public_key
+              );
+              setSignatureValid(isValid);
+            } catch (verifyErr) {
+              console.error('Failed to verify signature:', verifyErr);
+              setSignatureValid(false);
+            }
           } catch (decryptErr) {
             console.error('Failed to decrypt message:', decryptErr);
             setError('Failed to decrypt message. Private key may be invalid.');
+            setSignatureValid(false);
           }
         }
       } else {
@@ -186,7 +193,7 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
                   <h2 className="text-2xl font-bold text-white">
                     {decryptedPayload?.subject || '(No subject)'}
                   </h2>
-                  {signatureValid ? (
+                  {signatureValid === true ? (
                     <div className="flex items-center text-green-500" title="Signature verified">
                       <svg
                         className="w-5 h-5"
@@ -203,24 +210,20 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
                       </svg>
                       <span className="ml-1 text-sm">Verified</span>
                     </div>
-                  ) : (
-                    <div className="flex items-center text-red-500" title="Signature invalid">
+                  ) : signatureValid === null ? (
+                    <div className="flex items-center text-gray-400" title="Verifying signature...">
                       <svg
-                        className="w-5 h-5"
+                        className="w-5 h-5 animate-spin"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
+                        <circle className="opacity-25" cx="12" cy="12" r="10" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      <span className="ml-1 text-sm">Invalid</span>
+                      <span className="ml-1 text-sm">Verifying...</span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
                 <div className="text-gray-400 text-sm space-y-1">
                   <div>
@@ -279,11 +282,11 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
                   {decryptedPayload.attachments.map((attachment: MessageAttachment, index: number) => (
                     <div
                       key={index}
-                      className="flex items-center justify-between p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
+                      className="flex items-center justify-between p-3 bg-neutral-800 rounded-lg hover:bg-neutral-700 transition-colors cursor-pointer"
                     >
                       <div className="flex items-center space-x-3">
                         <svg
-                          className="w-5 h-5 text-blue-400"
+                          className="w-5 h-5"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -306,7 +309,7 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
                       </div>
                       <button
                         onClick={() => downloadAttachment(attachment)}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-2"
+                        className="px-4 py-2 bg-white hover:bg-gray-300 text-black  rounded-lg transition-colors flex items-center space-x-2 cursor-pointer"
                       >
                         <svg
                           className="w-4 h-4"

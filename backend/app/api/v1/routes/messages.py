@@ -56,6 +56,8 @@ class InboxMessagePreview(BaseModel):
     sender_id: int
     sender_username: str
     encrypted_payload: str  # Full encrypted payload for frontend decryption
+    signature: str
+    sender_public_key: str
     is_read: bool
     created_at: datetime
 
@@ -67,6 +69,8 @@ class SentMessagePreview(BaseModel):
     recipient_id: int
     recipient_username: str
     encrypted_payload: str  # Full encrypted payload for frontend decryption
+    signature: str
+    sender_public_key: str
     is_read: bool
     created_at: datetime
 
@@ -201,6 +205,8 @@ def get_inbox(
                 sender_id=msg.sender_id,
                 sender_username=sender.full_name if sender else "Unknown",
                 encrypted_payload=msg.encrypted_payload_recipient,
+                signature=msg.signature,
+                sender_public_key=sender.public_key if sender else "",
                 is_read=msg.is_read,
                 created_at=msg.created_at,
             )
@@ -258,6 +264,8 @@ def get_sent(
                 recipient_id=msg.recipient_id,
                 recipient_username=recipient.full_name if recipient else "Unknown",
                 encrypted_payload=msg.encrypted_payload_sender,
+                signature=msg.signature,
+                sender_public_key=current_user.public_key,
                 is_read=msg.is_read,
                 created_at=msg.created_at,
             )

@@ -9,9 +9,14 @@
 # GET    /auth/verify-recipient - Verify recipient existence and get public key
 
 import asyncio
-import re
+import hashlib
+import json
+import secrets
+import time
 from datetime import UTC, datetime
 
+import pyotp
+import regex
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -30,10 +35,15 @@ from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-NAME_REGEX = re.compile(r"^[a-zA-Z\s'-]{2,50}$")
+EMAIL_REGEX = regex.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+NAME_REGEX = regex.compile(
+    r"^[\p{L}\s\'\-\u2013]{2,50}$", regex.UNICODE | regex.IGNORECASE
+)
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
+PENDING_LOGIN_TTL_SECONDS = 300
+
+_pending_login_tokens: dict[str, tuple[int, float]] = {}
 
 
 class SignupRequest(BaseModel):
@@ -74,10 +84,66 @@ class LoginResponse(BaseModel):
     public_key: str
     encrypted_private_key: str  # For client-side decryption with password
     pbkdf2_salt: str  # Salt for PBKDF2 decryption
+    is_2fa_enabled: bool = False
 
 
 class LogoutResponse(BaseModel):
     """Logout response schema."""
+
+    message: str
+
+
+class LoginStepOneResponse(BaseModel):
+    """Login step-one response indicating whether 2FA is required."""
+
+    requires_2fa: bool
+    pending_token: str | None = None
+    user: LoginResponse | None = None
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    """Request to finalize login with 2FA code."""
+
+    pending_token: str
+    totp_code: str | None = None
+    backup_code: str | None = None
+
+
+class TwoFactorVerifyResponse(LoginResponse):
+    """Response after successful 2FA verification."""
+
+    requires_2fa: bool = False
+
+
+class TwoFactorSetupResponse(BaseModel):
+    """Response containing temporary TOTP secret and otpauth URL."""
+
+    temp_secret: str
+    otpauth_url: str
+
+
+class TwoFactorActivateRequest(BaseModel):
+    """Request to activate TOTP for the account."""
+
+    temp_secret: str
+    totp_code: str
+
+
+class TwoFactorActivateResponse(BaseModel):
+    """Response with plaintext backup codes (display once)."""
+
+    backup_codes: list[str]
+
+
+class TwoFactorDisableRequest(BaseModel):
+    """Request to disable 2FA using TOTP or backup code."""
+
+    totp_code: str | None = None
+    backup_code: str | None = None
+
+
+class TwoFactorStatusResponse(BaseModel):
+    """Generic 2FA status response."""
 
     message: str
 
@@ -180,6 +246,84 @@ def validate_name(name: str, field_name: str = "Name") -> str:
     return name
 
 
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def _generate_backup_codes(count: int) -> tuple[list[str], list[str]]:
+    """Generate backup codes and their hashes."""
+    plain: list[str] = []
+    hashed: list[str] = []
+    for _ in range(count):
+        code = secrets.token_urlsafe(8)
+        plain.append(code)
+        hashed.append(_hash_code(code))
+    return plain, hashed
+
+
+def _load_backup_codes(user: User) -> list[str]:
+    if not user.backup_codes:
+        return []
+    try:
+        codes = json.loads(user.backup_codes)
+        return codes if isinstance(codes, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
+def _save_backup_codes(user: User, hashed_codes: list[str]) -> None:
+    user.backup_codes = json.dumps(hashed_codes)
+
+
+def _consume_backup_code(user: User, code: str, db_session: Session) -> bool:
+    hashed = _hash_code(code)
+    codes = _load_backup_codes(user)
+    if hashed not in codes:
+        return False
+    codes.remove(hashed)
+    _save_backup_codes(user, codes)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return True
+
+
+def _verify_totp_code(secret: str | None, code: str) -> bool:
+    if not secret or not code:
+        return False
+    try:
+        totp = pyotp.TOTP(
+            secret,
+            interval=settings.TOTP_PERIOD,
+            digits=settings.TOTP_DIGITS,
+        )
+        return bool(totp.verify(code, valid_window=1))
+    except Exception:
+        return False
+
+
+def _clean_expired_pending_tokens() -> None:
+    now = time.time()
+    expired = [
+        token
+        for token, (_, ts) in _pending_login_tokens.items()
+        if now - ts > PENDING_LOGIN_TTL_SECONDS
+    ]
+    for token in expired:
+        _pending_login_tokens.pop(token, None)
+
+
+def _pop_pending_token(token: str) -> int | None:
+    _clean_expired_pending_tokens()
+    data = _pending_login_tokens.pop(token, None)
+    if not data:
+        return None
+    user_id, ts = data
+    if time.time() - ts > PENDING_LOGIN_TTL_SECONDS:
+        return None
+    return user_id
+
+
 def get_current_user(
     request: Request,
     db_session: Session = Depends(get_db_session),
@@ -278,13 +422,13 @@ def signup(
     return db_user
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login", response_model=LoginStepOneResponse)
 async def login(
     login_request: LoginRequest,
     request: Request,
     response: Response,
     db_session: Session = Depends(get_db_session),
-) -> LoginResponse:
+) -> LoginStepOneResponse:
     """
     Authenticate user and create session.
 
@@ -335,13 +479,19 @@ async def login(
             detail="Account inactive",
         )
 
+    if user.is_2fa_enabled:
+        pending_token = secrets.token_urlsafe(32)
+        _pending_login_tokens[pending_token] = (user.id, time.time())
+        return LoginStepOneResponse(
+            requires_2fa=True, pending_token=pending_token, user=None
+        )
+
     session_id = create_session(
         user_id=user.id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
 
-    # Set secure httpOnly cookie
     response.set_cookie(
         key=settings.SESSION_COOKIE_NAME,
         value=session_id,
@@ -351,14 +501,19 @@ async def login(
         max_age=settings.SESSION_TIMEOUT_MINUTES * 60,
     )
 
-    return LoginResponse(
-        id=user.id,
-        email=user.email,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        public_key=user.public_key,
-        encrypted_private_key=user.encrypted_private_key,
-        pbkdf2_salt=user.pbkdf2_salt,
+    return LoginStepOneResponse(
+        requires_2fa=False,
+        pending_token=None,
+        user=LoginResponse(
+            id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            public_key=user.public_key,
+            encrypted_private_key=user.encrypted_private_key,
+            pbkdf2_salt=user.pbkdf2_salt,
+            is_2fa_enabled=user.is_2fa_enabled,
+        ),
     )
 
 
@@ -379,6 +534,77 @@ def logout(
     return LogoutResponse(message="Logged out successfully")
 
 
+@router.post("/login/verify-2fa", response_model=TwoFactorVerifyResponse)
+def verify_2fa_login(
+    verify_request: TwoFactorVerifyRequest,
+    request: Request,
+    response: Response,
+    db_session: Session = Depends(get_db_session),
+) -> TwoFactorVerifyResponse:
+    """Finalize login by verifying TOTP or backup code and issuing session."""
+    user_id = _pop_pending_token(verify_request.pending_token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    user = db_session.get(User, user_id)
+    if not user or not user.is_active or not user.is_2fa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    rate_key = f"2fa:{user.email}"
+    if RateLimiter.is_rate_limited(rate_key, max_attempts=5, window_seconds=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests",
+        )
+    RateLimiter.record_attempt(rate_key)
+
+    verified = False
+    if verify_request.backup_code:
+        verified = _consume_backup_code(user, verify_request.backup_code, db_session)
+
+    if not verified and verify_request.totp_code:
+        verified = _verify_totp_code(user.totp_secret, verify_request.totp_code)
+
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    session_id = create_session(
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=session_id,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.SESSION_TIMEOUT_MINUTES * 60,
+    )
+
+    return TwoFactorVerifyResponse(
+        requires_2fa=False,
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        public_key=user.public_key,
+        encrypted_private_key=user.encrypted_private_key,
+        pbkdf2_salt=user.pbkdf2_salt,
+        is_2fa_enabled=user.is_2fa_enabled,
+    )
+
+
 @router.get("/me", response_model=LoginResponse)
 def get_current_user_info(
     _: User = Depends(get_current_user),
@@ -393,7 +619,101 @@ def get_current_user_info(
         public_key=user.public_key,
         encrypted_private_key=user.encrypted_private_key,
         pbkdf2_salt=user.pbkdf2_salt,
+        is_2fa_enabled=user.is_2fa_enabled,
     )
+
+
+@router.post("/2fa/initiate", response_model=TwoFactorSetupResponse)
+def initiate_2fa(
+    current_user: User = Depends(get_current_user),
+) -> TwoFactorSetupResponse:
+    """Begin 2FA enrollment by issuing a temporary secret and otpauth URI."""
+    if current_user.is_2fa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to process request",
+        )
+
+    temp_secret = pyotp.random_base32()
+    totp = pyotp.TOTP(
+        temp_secret, interval=settings.TOTP_PERIOD, digits=settings.TOTP_DIGITS
+    )
+    otpauth_url = totp.provisioning_uri(
+        name=current_user.email, issuer_name=settings.TOTP_ISSUER
+    )
+
+    return TwoFactorSetupResponse(temp_secret=temp_secret, otpauth_url=otpauth_url)
+
+
+@router.post("/2fa/activate", response_model=TwoFactorActivateResponse)
+def activate_2fa(
+    activate_request: TwoFactorActivateRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_db_session),
+) -> TwoFactorActivateResponse:
+    """Activate 2FA after verifying a code from the provided secret."""
+    if current_user.is_2fa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to process request",
+        )
+
+    if not _verify_totp_code(activate_request.temp_secret, activate_request.totp_code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code",
+        )
+
+    plain_codes, hashed_codes = _generate_backup_codes(settings.TOTP_BACKUP_CODES_COUNT)
+
+    current_user.totp_secret = activate_request.temp_secret
+    current_user.is_2fa_enabled = True
+    _save_backup_codes(current_user, hashed_codes)
+    current_user.updated_at = datetime.now(UTC)
+
+    db_session.add(current_user)
+    db_session.commit()
+    db_session.refresh(current_user)
+
+    return TwoFactorActivateResponse(backup_codes=plain_codes)
+
+
+@router.post("/2fa/disable", response_model=TwoFactorStatusResponse)
+def disable_2fa(
+    disable_request: TwoFactorDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_db_session),
+) -> TwoFactorStatusResponse:
+    """Disable 2FA after verifying TOTP or backup code."""
+    if not current_user.is_2fa_enabled:
+        return TwoFactorStatusResponse(message="2FA already disabled")
+
+    verified = False
+    if disable_request.backup_code:
+        verified = _consume_backup_code(
+            current_user, disable_request.backup_code, db_session
+        )
+
+    if not verified and disable_request.totp_code:
+        verified = _verify_totp_code(
+            current_user.totp_secret, disable_request.totp_code
+        )
+
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code",
+        )
+
+    current_user.is_2fa_enabled = False
+    current_user.totp_secret = None
+    current_user.backup_codes = None
+    current_user.updated_at = datetime.now(UTC)
+
+    db_session.add(current_user)
+    db_session.commit()
+
+    return TwoFactorStatusResponse(message="2FA disabled")
 
 
 class UserPublicInfo(BaseModel):
