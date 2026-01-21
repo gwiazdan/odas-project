@@ -17,12 +17,12 @@ services:
       context: ./backend
     restart: unless-stopped
     environment:
-      - DATABASE_URI=sqlite:////app/app.db
+      - DATABASE_URI=sqlite:///./database.db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       - redis
     volumes:
-      - db_data:/app
+      - ./backend/database.db:/app/database.db
     ports:
       - "8000:8000"
     logging:
@@ -66,8 +66,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # If you need custom error pages or extra config, add more mounts here.
 
 volumes:
   redis_data:
-  db_data:

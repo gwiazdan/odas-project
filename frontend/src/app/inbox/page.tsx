@@ -36,7 +36,6 @@ interface InboxResponse {
 }
 
 export default function InboxPage() {
-  const router = useRouter();
   const { user, csrfToken } = useUserContext();
   const { privateKeyPEM, isLoading } = useCryptoContext();
   const [messages, setMessages] = useState<InboxMessage[]>([]);
@@ -47,13 +46,6 @@ export default function InboxPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selectedMessage, setSelectedMessage] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!user) {
-      router.push('/login');
-      return;
-    }
-  }, [user, router]);
 
   const fetchInbox = useCallback(async () => {
     try {
@@ -241,7 +233,7 @@ export default function InboxPage() {
                   <span className="ml-2 text-gray-400">({total})</span>
                 </h5>
               </div>
-              <div className="flex flex-col shrink-0 space-y-3 md:flex-row md:items-center lg:justify-end md:space-y-0 md:space-x-3">
+              <div className="flex shrink-0 space-y-3 md:flex-row md:items-center lg:justify-end md:space-y-0 md:space-x-3">
                 <button
                   type="button"
                   onClick={handleBulkDelete}

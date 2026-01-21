@@ -102,7 +102,7 @@ def _get_redis_client() -> redis.Redis:
 
     # All retries failed
     logger.critical(
-        f"Could not connect to Redis after 5 attempts",
+        "Could not connect to Redis after 5 attempts",
         extra={"redis_url": settings.REDIS_URL, "error": str(last_error)},
     )
     raise RuntimeError(f"Redis connection failed: {last_error}")

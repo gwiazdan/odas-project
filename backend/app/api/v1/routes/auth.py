@@ -771,6 +771,27 @@ def search_user_by_email(
     return user
 
 
+@router.get("/verify-session", response_model=dict)
+def verify_session_endpoint(request: Request) -> dict:
+    """
+    Verify session cookie for frontend hydration.
+    """
+    session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="No session cookie")
+    session_data = get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=401, detail="Invalid/expired session")
+    csrf_header = request.headers.get("X-CSRF-Token")
+    if csrf_header and csrf_header != session_data.csrf_token:
+        raise HTTPException(status_code=401, detail="CSRF mismatch")
+    return {
+        "valid": True,
+        "user_id": session_data.user_id,
+        "csrf_token": session_data.csrf_token,
+    }
+
+
 @router.get("/verify-recipient", response_model=PublicKeyResponse)
 def verify_recipient_and_get_public_key(
     email: str,
