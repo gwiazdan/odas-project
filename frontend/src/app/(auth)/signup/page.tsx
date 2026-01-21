@@ -16,8 +16,9 @@ export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [website, setWebsite] = useState(''); // Honeypot field
   const [error, setError] = useState('');
-  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});;
   const [loading, setLoading] = useState(false);
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -86,6 +87,7 @@ export default function SignupPage() {
         last_name: sanitizeInput(lastName.trim()),
         email: sanitizeInput(email.trim().toLowerCase()),
         password: password,
+        website: website, // Honeypot - should always be empty
       };
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/signup`, {
@@ -117,15 +119,14 @@ export default function SignupPage() {
           // Validate the decrypted private key
           const isValid = await validatePrivateKey(decrypted);
           if (!isValid) {
-            console.error('Invalid private key received from server');
             setError('Registration succeeded but private key is invalid. Please contact support.');
             return;
           }
 
           setDecryptedPrivateKey(decrypted);
         }
-      } catch (decryptErr) {
-        console.warn('Failed to decrypt private key:', decryptErr);
+      } catch  {
+        // Silent error
       }
       router.push('/login');
     } catch {
@@ -268,6 +269,20 @@ export default function SignupPage() {
             {validationErrors.confirmPassword && (
               <p className="text-red-400 text-xs mt-1">{validationErrors.confirmPassword}</p>
             )}
+          </div>
+
+          {/* Honeypot field - hidden from humans, visible to bots */}
+          <div className="sr-only" aria-hidden="true">
+            <label htmlFor="website">Website (leave blank)</label>
+            <input
+              type="text"
+              name="website"
+              id="website"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              tabIndex={-1}
+              autoComplete="off"
+            />
           </div>
 
           {/* Submit Button */}

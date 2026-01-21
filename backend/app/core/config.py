@@ -29,13 +29,21 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     SESSION_COOKIE_NAME: str = "sessionId"
-    SESSION_TIMEOUT_MINUTES: int = 60 * 24  # 24 hours
+    SESSION_TIMEOUT_MINUTES: int = 60 * 24
+    SESSION_ID_LENGTH: int = 32
+    REDIS_SESSION_PREFIX: str = "session:"
 
     # CORS Settings
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    ALLOWED_ORIGINS: str = "https://localhost,https://127.0.0.1"
     ALLOW_CREDENTIALS: bool = True
     ALLOW_METHODS: list[str] = ["*"]
     ALLOW_HEADERS: list[str] = ["*"]
+
+    # Crypto
+    RSA_KEY_SIZE: int = 4096
+    RSA_PUBLIC_EXPONENT: int = 65537
+    PBKDF2_ITERATIONS: int = 480000
+    PBKDF2_SALT_SIZE: int = 32
 
 
 settings = Settings()

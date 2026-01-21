@@ -1,11 +1,9 @@
 """Rate limiting and security utilities."""
 
 import re
-import time
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-login_attempts: dict[str, list[float]] = defaultdict(list)
+from app.core.sessions import _get_redis_client
 
 
 def sanitize_string(value: str, max_length: int = 255) -> str:
@@ -72,8 +70,8 @@ def validate_attachment_metadata(attachment: dict) -> bool:
     if not isinstance(attachment["size"], int) or attachment["size"] <= 0:
         raise ValueError("Attachment size must be a positive integer")
 
-    # Limit file size - 25 MB
-    MAX_FILE_SIZE = 25 * 1024 * 1024
+    # Limit file size - 50 MB
+    MAX_FILE_SIZE = 50 * 1024 * 1024
     if attachment["size"] > MAX_FILE_SIZE:
         raise ValueError(f"Attachment size exceeds maximum of {MAX_FILE_SIZE} bytes")
 
@@ -89,31 +87,33 @@ def validate_attachment_metadata(attachment: dict) -> bool:
 
 
 class RateLimiter:
-    """Simple rate limiter for authentication attempts."""
+    """Redis-backed rate limiter (no in-memory fallback)."""
 
     @staticmethod
     def is_rate_limited(
         identifier: str,
         max_attempts: int = 5,
-        window_seconds: int = 300,  # 5 minutes
+        window_seconds: int = 300,
     ) -> bool:
         """Check if identifier has exceeded rate limit."""
-        now = time.time()
-
-        login_attempts[identifier] = [
-            attempt_time
-            for attempt_time in login_attempts[identifier]
-            if now - attempt_time < window_seconds
-        ]
-
-        if len(login_attempts[identifier]) >= max_attempts:
-            return True
-        return False
+        client = _get_redis_client()
+        key = f"ratelimit:{identifier}"
+        current = int(client.get(key) or 0)
+        return current >= max_attempts
 
     @staticmethod
-    def record_attempt(identifier: str) -> None:
-        """Record a login attempt."""
-        login_attempts[identifier].append(time.time())
+    def record_attempt(
+        identifier: str,
+        window_seconds: int = 300,
+    ) -> None:
+        """Record a login attempt with TTL matching the window."""
+        client = _get_redis_client()
+        key = f"ratelimit:{identifier}"
+        client.incr(key)
+        # Ensure TTL is set for the window
+        ttl = client.ttl(key)
+        if ttl is None or ttl < 0:
+            client.expire(key, window_seconds)
 
     @staticmethod
     def get_remaining_attempts(
@@ -122,13 +122,10 @@ class RateLimiter:
         window_seconds: int = 300,
     ) -> int:
         """Get remaining attempts before rate limit."""
-        now = time.time()
-        login_attempts[identifier] = [
-            attempt_time
-            for attempt_time in login_attempts[identifier]
-            if now - attempt_time < window_seconds
-        ]
-        return max(0, max_attempts - len(login_attempts[identifier]))
+        client = _get_redis_client()
+        key = f"ratelimit:{identifier}"
+        current = int(client.get(key) or 0)
+        return max(0, max_attempts - current)
 
     @staticmethod
     def get_reset_time(
@@ -136,10 +133,9 @@ class RateLimiter:
         window_seconds: int = 300,
     ) -> datetime | None:
         """Get when rate limit will reset."""
-        if not login_attempts[identifier]:
+        client = _get_redis_client()
+        key = f"ratelimit:{identifier}"
+        ttl = client.ttl(key)
+        if ttl is None or ttl < 0:
             return None
-        oldest_attempt = min(login_attempts[identifier])
-        reset_time = datetime.fromtimestamp(
-            oldest_attempt + window_seconds, tz=timezone.utc
-        )
-        return reset_time
+        return datetime.now(timezone.utc) + timedelta(seconds=ttl)

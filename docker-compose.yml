@@ -22,7 +22,7 @@ services:
     depends_on:
       - redis
     volumes:
-      - ./backend/app.db:/app/app.db
+      - db_data:/app
     ports:
       - "8000:8000"
     logging:
@@ -35,10 +35,10 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost
+        NEXT_PUBLIC_API_URL: https://localhost
     restart: unless-stopped
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost
+      - NEXT_PUBLIC_API_URL=https://localhost
     depends_on:
       - backend
     expose:
@@ -57,8 +57,10 @@ services:
       - backend
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
     logging:
       driver: "json-file"
       options:
@@ -68,3 +70,4 @@ services:
 
 volumes:
   redis_data:
+  db_data:

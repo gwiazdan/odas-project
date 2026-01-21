@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useCryptoContext } from '@/context/CryptoContext';
 import { decryptMessage, verifySignature } from '@/lib/crypto';
+import { toast } from 'react-toastify';
 
 interface MessageAttachment {
   name: string;
@@ -54,7 +55,7 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
       setError(null);
       setSignatureValid(null); // Reset signature state
       const response = await fetch(
-        `http://localhost:8000/api/v1/messages/${messageId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/messages/${messageId}`,
         {
           credentials: 'include',
         }
@@ -79,12 +80,10 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
                 data.sender.public_key
               );
               setSignatureValid(isValid);
-            } catch (verifyErr) {
-              console.error('Failed to verify signature:', verifyErr);
+            } catch {
               setSignatureValid(false);
             }
-          } catch (decryptErr) {
-            console.error('Failed to decrypt message:', decryptErr);
+          } catch {
             setError('Failed to decrypt message. Private key may be invalid.');
             setSignatureValid(false);
           }
@@ -92,9 +91,8 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
       } else {
         setError('Failed to load message');
       }
-    } catch (err) {
+    } catch {
       setError('Failed to load message');
-      console.error('Failed to fetch message:', err);
     } finally {
       setLoading(false);
     }
@@ -123,8 +121,8 @@ export default function MessageViewer({ messageId, onClose }: MessageViewerProps
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Failed to download attachment:', err);
+    } catch {
+      toast.error(`Cannot download ${attachment.name}`);
     }
   };
 

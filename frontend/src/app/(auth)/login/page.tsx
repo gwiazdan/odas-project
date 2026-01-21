@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { sanitizeInput, isValidEmail } from '@/lib/security';
 import { decryptPrivateKey, validatePrivateKey } from '@/lib/crypto';
 import { useCryptoContext } from '@/context/CryptoContext';
-import { useUserContext } from '@/context/UserContext';
+import { UserData, useUserContext } from '@/context/UserContext';
 import TwoFactorPrompt from '@/components/TwoFactorPrompt';
 
 export default function LoginPage() {
@@ -15,8 +15,9 @@ export default function LoginPage() {
   const { setUser } = useUserContext();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [website, setWebsite] = useState(''); // Honeypot field
   const [error, setError] = useState('');
-  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});;
   const [loading, setLoading] = useState(false);
   const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [savedPassword, setSavedPassword] = useState<string>('');
@@ -44,7 +45,7 @@ export default function LoginPage() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleTwoFactorSuccess = async (userData: any) => {
+  const handleTwoFactorSuccess = async (userData: UserData) => {
     try {
       setUser({
         id: userData.id,
@@ -53,6 +54,7 @@ export default function LoginPage() {
         last_name: userData.last_name,
         public_key: userData.public_key,
         is_2fa_enabled: userData.is_2fa_enabled,
+        csrf_token: userData.csrf_token,
       });
 
       if (!userData.encrypted_private_key || !userData.pbkdf2_salt) {
@@ -78,8 +80,7 @@ export default function LoginPage() {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       router.push('/inbox');
-    } catch (decryptErr) {
-      console.error('Private key decryption failed:', decryptErr);
+    } catch {
       setError('Failed to decrypt private key. Wrong password or corrupted data.');
       setPendingToken(null);
     }
@@ -107,6 +108,7 @@ export default function LoginPage() {
         body: JSON.stringify({
           email: sanitizedEmail,
           password: password,
+          website: website, // Honeypot - should always be empty
         }),
       });
 
@@ -139,6 +141,7 @@ export default function LoginPage() {
         last_name: userData.last_name,
         public_key: userData.public_key,
         is_2fa_enabled: userData.is_2fa_enabled,
+        csrf_token: userData.csrf_token,
       });
 
       try {
@@ -165,17 +168,15 @@ export default function LoginPage() {
         await setDecryptedPrivateKey(decrypted);
 
         await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (decryptErr) {
-        console.error('Private key decryption failed:', decryptErr);
+      } catch {
         setError('Failed to decrypt private key. Wrong password or corrupted data.');
         setLoading(false);
         return;
       }
 
       router.push('/inbox');
-    } catch (err) {
+    } catch {
       setError('An error occurred. Please try again.');
-      console.error('Login error:', err);
     } finally {
       setLoading(false);
     }
@@ -242,6 +243,20 @@ export default function LoginPage() {
               {validationErrors.password && (
                 <p className="text-red-400 text-xs mt-1">{validationErrors.password}</p>
               )}
+            </div>
+
+            {/* Honeypot field - hidden from humans, visible to bots */}
+            <div className="sr-only" aria-hidden="true">
+              <label htmlFor="website">Website (leave blank)</label>
+              <input
+                type="text"
+                name="website"
+                id="website"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                tabIndex={-1}
+                autoComplete="off"
+              />
             </div>
 
             {/* Submit Button */}

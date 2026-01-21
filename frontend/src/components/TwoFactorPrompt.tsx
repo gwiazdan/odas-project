@@ -1,10 +1,11 @@
 'use client';
 
+import { UserData } from '@/context/UserContext';
 import { useState } from 'react';
 
 interface TwoFactorPromptProps {
   pendingToken: string;
-  onSuccess: (userData: any) => void;
+  onSuccess: (userData: UserData) => void;
   onCancel: () => void;
 }
 
@@ -50,8 +51,7 @@ export default function TwoFactorPrompt({ pendingToken, onSuccess, onCancel }: T
 
       const data = await response.json();
       onSuccess(data);
-    } catch (err) {
-      console.error('2FA verification error:', err);
+    } catch {
       setError('An error occurred. Please try again.');
     } finally {
       setLoading(false);

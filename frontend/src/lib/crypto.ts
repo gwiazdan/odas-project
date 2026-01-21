@@ -23,7 +23,6 @@ export async function validatePrivateKey(privateKeyPEM: string): Promise<boolean
 
     return true;
   } catch (error) {
-    console.error('Private key validation failed:', error);
     return false;
   }
 }

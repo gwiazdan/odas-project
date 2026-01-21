@@ -13,7 +13,7 @@ interface ComposeMessageProps {
 
 export default function ComposeMessage({ onClose }: ComposeMessageProps) {
   const { privateKeyPEM } = useCryptoContext();
-  const { user } = useUserContext();
+  const { user, csrfToken } = useUserContext();
   const [recipient, setRecipient] = useState('');
   const [subject, setSubject] = useState('');
   const [content, setContent] = useState('');
@@ -64,6 +64,13 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
     const sanitizedSubject = sanitizeInput(subject.trim());
     const sanitizedContent = sanitizeInput(content.trim());
 
+    // Validate total attachment size (50MB cap)
+    const totalSize = attachments.reduce((sum, file) => sum + file.size, 0);
+    if (totalSize > 50 * 1024 * 1024) {
+      setError('Max 50MB total attachments');
+      return;
+    }
+
     // Validate
     if (!sanitizedRecipient || !sanitizedContent) {
       setError('Please fill in recipient and message content');
@@ -108,22 +115,22 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
       const recipientId = keyData.id;
       const recipientPublicKey = keyData.public_key;
 
-      // Encode attachments to base64 first
+      // Encode attachments to base64 in streaming chunks to avoid call stack issues
       const attachmentPromises = attachments.map(async (file) => {
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
-        // Convert bytes to base64 safely for large files
-        let binary = '';
+        const chunks: string[] = [];
         const chunkSize = 8192;
         for (let i = 0; i < bytes.length; i += chunkSize) {
-          const chunk = bytes.subarray(i, i + chunkSize);
-          binary += String.fromCharCode(...chunk);
+          chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
         }
+        const data = btoa(chunks.join(''));
+
         return {
           name: file.name,
           size: file.size,
           type: file.type,
-          data: btoa(binary),
+          data,
         };
       });
 
@@ -153,7 +160,10 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
       const sendResponse = await fetch(`${apiUrl}/api/v1/messages/send`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
+        },
         body: JSON.stringify({
           recipient_id: recipientId,
           payload_recipient: encryptedForRecipient,
@@ -192,7 +202,6 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
       setContent('');
       setAttachments([]);
     } catch (err) {
-      console.error('Error sending message:', err);
       let errorMessage = 'Error sending message';
 
       if (err instanceof Error) {
@@ -327,7 +336,7 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
                     className="flex items-center justify-between bg-gray-700 px-3 py-2 rounded"
                   >
                     <div className="flex items-center space-x-2 min-w-0 flex-1">
-                      <div className="text-gray-400 flex-shrink-0" style={{ width: '16px', height: '16px' }}>
+                      <div className="text-gray-400 shrink-0" style={{ width: '16px', height: '16px' }}>
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>
                         </svg>
@@ -335,13 +344,13 @@ export default function ComposeMessage({ onClose }: ComposeMessageProps) {
                       <span className="text-sm text-gray-200 truncate">
                         {file.name}
                       </span>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
+                      <span className="text-xs text-gray-400 shrink-0">
                         ({(file.size / 1024).toFixed(1)} KB)
                       </span>
                     </div>
                     <button
                       onClick={() => removeAttachment(index)}
-                      className="ml-2 text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
+                      className="ml-2 text-gray-400 hover:text-red-400 transition-colors shrink-0"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M18 6 6 18"/><path d="m6 6 12 12"/>

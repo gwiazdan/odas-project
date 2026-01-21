@@ -12,6 +12,7 @@ dependencies = [
     "pyotp>=2.9.0",
     "regex>=2024.11.0",
     "redis>=5.0.0",
+    "zxcvbn>=4.4.3",
 ]
 
 [dependency-groups]

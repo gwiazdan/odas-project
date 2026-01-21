@@ -6,6 +6,7 @@ import { useUserContext } from '@/context/UserContext';
 import { useCryptoContext } from '@/context/CryptoContext';
 import MessageViewer from '@/components/MessageViewer';
 import { decryptMessage, verifySignature } from '@/lib/crypto';
+import { toast } from 'react-toastify';
 
 interface SentMessage {
   id: number;
@@ -36,7 +37,7 @@ interface SentResponse {
 
 export default function SentPage() {
   const router = useRouter();
-  const { user } = useUserContext();
+  const { user, csrfToken } = useUserContext();
   const { privateKeyPEM, isLoading } = useCryptoContext();
   const [messages, setMessages] = useState<SentMessage[]>([]);
   const [decryptedMessages, setDecryptedMessages] = useState<DecryptedSentMessage[]>([]);
@@ -58,7 +59,7 @@ export default function SentPage() {
     try {
       setLoading(true);
       const response = await fetch(
-        `http://localhost:8000/api/v1/messages/sent?page=${currentPage}&page_size=10`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/messages/sent?page=${currentPage}&page_size=10`,
         {
           credentials: 'include',
         }
@@ -99,8 +100,7 @@ export default function SentPage() {
                   } else {
                     signatureValid = false;
                   }
-                } catch (err) {
-                  console.error('Failed to verify signature:', err);
+                } catch {
                   signatureValid = false;
                 }
 
@@ -112,8 +112,7 @@ export default function SentPage() {
                   attachment_count: payload.attachments?.length || 0,
                   signature_valid: signatureValid,
                 };
-              } catch (err) {
-                console.error('Failed to decrypt message preview:', err);
+              } catch {
                 return {
                   ...msg,
                   subject: '[Decryption failed]',
@@ -128,8 +127,8 @@ export default function SentPage() {
           setDecryptedMessages(decrypted);
         }
       }
-    } catch (error) {
-      console.error('Failed to fetch sent messages:', error);
+    } catch {
+      toast.error('No messages. Refresh page');
     } finally {
       setLoading(false);
     }
@@ -169,10 +168,13 @@ export default function SentPage() {
 
     try {
       const response = await fetch(
-        'http://localhost:8000/api/v1/messages/bulk-delete',
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/messages/bulk-delete`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
+          },
           credentials: 'include',
           body: JSON.stringify({
             message_ids: Array.from(selectedIds),
@@ -184,8 +186,8 @@ export default function SentPage() {
         setSelectedIds(new Set());
         fetchSent();
       }
-    } catch (error) {
-      console.error('Failed to delete messages:', error);
+    } catch {
+      toast.error("Delete failed. Try again");
     }
   };
 
@@ -211,8 +213,8 @@ export default function SentPage() {
     return (
       <div className="min-h-screen  flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white-500 mx-auto mb-4"></div>
+          <p className="text-gray-400 font-bold tracking-wide">Loading...</p>
         </div>
       </div>
     );
@@ -221,7 +223,7 @@ export default function SentPage() {
   if (loading && messages.length === 0) {
     return (
       <div className="min-h-screen  flex items-center justify-center">
-        <div className="text-gray-400">Loading messages...</div>
+        <div className="text-gray-400 font-bold tracking-wide">Loading messages...</div>
       </div>
     );
   }
@@ -239,7 +241,7 @@ export default function SentPage() {
                   <span className="ml-2 text-gray-400">({total})</span>
                 </h5>
               </div>
-              <div className="flex flex-col flex-shrink-0 space-y-3 md:flex-row md:items-center lg:justify-end md:space-y-0 md:space-x-3">
+              <div className="flex flex-col shrink-0 space-y-3 md:flex-row md:items-center lg:justify-end md:space-y-0 md:space-x-3">
                 <button
                   type="button"
                   onClick={handleBulkDelete}

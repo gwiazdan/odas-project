@@ -58,8 +58,7 @@ const loadPrivateKeyFromDB = async (): Promise<string | null> => {
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
     });
-  } catch (error) {
-    console.error('Failed to load private key from IndexedDB:', error);
+  } catch {
     return null;
   }
 };
@@ -75,8 +74,8 @@ const clearPrivateKeyFromDB = async (): Promise<void> => {
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
-  } catch (error) {
-    console.error('Failed to clear private key from IndexedDB:', error);
+  } catch {
+    // Silent error - It is better not to inform user
   }
 };
 
@@ -94,7 +93,6 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         if (isValid) {
           setDecryptedPrivateKeyState(key);
         } else {
-          console.error('Invalid private key found in IndexedDB, clearing it');
           await clearPrivateKeyFromDB();
         }
       }
@@ -117,7 +115,6 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
         // Set state AFTER successful DB save to ensure it's persisted
         setDecryptedPrivateKeyState(key);
       } catch (error) {
-        console.error('Failed to save private key to IndexedDB:', error);
         throw error; // Propagate error so login can handle it
       }
     } else {

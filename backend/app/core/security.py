@@ -12,11 +12,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app.core.config import settings
+
 argon2_ph = PasswordHasher()
-RSA_KEY_SIZE = 4096
-RSA_PUBLIC_EXPONENT = 65537
-PBKDF2_ITERATIONS = 480000
-PBKDF2_SALT_SIZE = 32
 
 # EXPLANATION:
 # We're using Argon2id for password hashing
@@ -42,8 +40,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def generate_rsa_keypair() -> tuple[str, str]:
     private_key = rsa.generate_private_key(
-        public_exponent=RSA_PUBLIC_EXPONENT,
-        key_size=RSA_KEY_SIZE,
+        public_exponent=settings.RSA_PUBLIC_EXPONENT,
+        key_size=settings.RSA_KEY_SIZE,
         backend=default_backend(),
     )
 
@@ -67,8 +65,10 @@ def generate_rsa_keypair() -> tuple[str, str]:
 
 # Private key encryption (PBKDF2 + AES-GCM)
 def encrypt_private_key(private_key_pem: str, password: str) -> tuple[str, str]:
-    salt = os.urandom(PBKDF2_SALT_SIZE)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    salt = os.urandom(settings.PBKDF2_SALT_SIZE)
+    key = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt, settings.PBKDF2_ITERATIONS
+    )
 
     cipher = AESGCM(key)
     nonce = os.urandom(12)
@@ -87,7 +87,9 @@ def decrypt_private_key(
     nonce = encrypted_data[:12]
     ciphertext = encrypted_data[12:]
 
-    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    key = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt, settings.PBKDF2_ITERATIONS
+    )
     cipher = AESGCM(key)
 
     try:

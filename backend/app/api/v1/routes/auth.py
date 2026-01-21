@@ -20,6 +20,7 @@ import regex
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
+from zxcvbn import zxcvbn
 
 from app.core.config import settings
 from app.core.db import get_session as get_db_session
@@ -53,6 +54,7 @@ class SignupRequest(BaseModel):
     first_name: str = Field(..., min_length=2, max_length=50)
     last_name: str = Field(..., min_length=2, max_length=50)
     password: str = Field(..., min_length=8, max_length=128)
+    website: str = Field(default="")  # Honeypot field - should always be empty
 
 
 class SignupResponse(BaseModel):
@@ -72,6 +74,7 @@ class LoginRequest(BaseModel):
 
     email: str = Field(..., min_length=1, max_length=254)
     password: str = Field(..., min_length=1, max_length=500)
+    website: str = Field(default="")  # Honeypot field - should always be empty
 
 
 class LoginResponse(BaseModel):
@@ -85,6 +88,7 @@ class LoginResponse(BaseModel):
     encrypted_private_key: str  # For client-side decryption with password
     pbkdf2_salt: str  # Salt for PBKDF2 decryption
     is_2fa_enabled: bool = False
+    csrf_token: str | None = None
 
 
 class LogoutResponse(BaseModel):
@@ -150,49 +154,42 @@ class TwoFactorStatusResponse(BaseModel):
 
 def validate_password_strength(
     password: str,
-) -> None:  # TODO: zxcbn password strength validation
-    """
-    Validate password meets security requirements (negative approach).
-
-    Requirements:
-    - At least 8 characters
-    - At most 128 characters (prevent DoS)
-    - At least one uppercase letter
-    - At least one lowercase letter
-    - At least one digit
-    - At least one special character
-    """
-    errors = []
-
+) -> None:
+    """Validate password strength using zxcvbn, mirroring frontend rules."""
     if not password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password is required",
         )
 
-    if len(password) < MIN_PASSWORD_LENGTH:
-        errors.append("at least 8 characters")
-
-    if len(password) > MAX_PASSWORD_LENGTH:
-        errors.append("at most 128 characters")
-
-    if not any(c.isupper() for c in password):
-        errors.append("uppercase letter")
-
-    if not any(c.islower() for c in password):
-        errors.append("lowercase letter")
-
-    if not any(c.isdigit() for c in password):
-        errors.append("digit")
-
-    special_chars = r"!@#$%^&*()_+-=\[\]{};:'\",.<>?/\\|`~"
-    if not any(c in special_chars for c in password):
-        errors.append("special character")
-
-    if errors:
+    if len(password) < MIN_PASSWORD_LENGTH or len(password) > MAX_PASSWORD_LENGTH:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must contain: {', '.join(errors)}",
+            detail="Password must be 8-128 characters",
+        )
+
+    requirements = {
+        "uppercase letter": any(c.isupper() for c in password),
+        "lowercase letter": any(c.islower() for c in password),
+        "digit": any(c.isdigit() for c in password),
+        "special character": any(
+            c in r"!@#$%^&*()_+-=[]{};:'\",.<>?/\\|`~" for c in password
+        ),
+    }
+
+    missing = [label for label, ok in requirements.items() if not ok]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must contain: {', '.join(missing)}",
+        )
+
+    analysis = zxcvbn(password)
+    score = analysis.get("score", 0)
+    if score <= 3:  # zxcvbn score 0-4; require 4 like frontend (score>3)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is too weak. Use a longer passphrase with mixed characters.",
         )
 
 
@@ -377,6 +374,13 @@ def signup(
     5. Encrypt private key with PBKDF2 + AES-GCM
     6. Store user with encrypted private key
     """
+    # Honeypot check - if filled, reject silently
+    if signup_request.website:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to create account",
+        )
+
     # Validate inputs
     email = validate_email_format(signup_request.email)
     first_name = validate_name(signup_request.first_name, "First name")
@@ -439,6 +443,13 @@ async def login(
     - Artificial delay (100-300ms) to slow brute-force
     - HttpOnly Secure session cookie
     """
+    # Honeypot check - if filled, reject silently
+    if login_request.website:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
     email = validate_email_format(login_request.email)
 
     # Rate limiting check
@@ -486,7 +497,7 @@ async def login(
             requires_2fa=True, pending_token=pending_token, user=None
         )
 
-    session_id = create_session(
+    session_id, csrf_token = create_session(
         user_id=user.id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
@@ -513,6 +524,7 @@ async def login(
             encrypted_private_key=user.encrypted_private_key,
             pbkdf2_salt=user.pbkdf2_salt,
             is_2fa_enabled=user.is_2fa_enabled,
+            csrf_token=csrf_token,
         ),
     )
 
@@ -577,7 +589,7 @@ def verify_2fa_login(
             detail="Invalid credentials",
         )
 
-    session_id = create_session(
+    session_id, csrf_token = create_session(
         user_id=user.id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
@@ -602,6 +614,7 @@ def verify_2fa_login(
         encrypted_private_key=user.encrypted_private_key,
         pbkdf2_salt=user.pbkdf2_salt,
         is_2fa_enabled=user.is_2fa_enabled,
+        csrf_token=csrf_token,
     )
 
 
@@ -751,7 +764,7 @@ def search_user_by_email(
             detail="Too many search requests",
         )
 
-    RateLimiter.record_attempt(rate_limit_key)
+    RateLimiter.record_attempt(rate_limit_key, window_seconds=60)
 
     statement = select(User).where(User.email == email, User.is_active)
     user = db_session.exec(statement).first()
@@ -779,7 +792,7 @@ def verify_recipient_and_get_public_key(
             detail="Too many requests",
         )
 
-    RateLimiter.record_attempt(rate_limit_key)
+    RateLimiter.record_attempt(rate_limit_key, window_seconds=60)
 
     normalized_email = email.strip().lower() if email else ""
 

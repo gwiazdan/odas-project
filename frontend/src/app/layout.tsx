@@ -10,15 +10,20 @@ import { UserProvider, useUserContext } from "@/context/UserContext";
 import { sanitizeInput } from "@/lib/security";
 import ComposeMessage from "@/components/ComposeMessage";
 import TwoFactorSetup from "@/components/TwoFactorSetup";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { toastConfig } from "@/lib/toast-config";
+import { toast, ToastContainer } from "react-toastify";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export default function RootLayout({
@@ -29,11 +34,14 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
       <body>
-        <CryptoProvider>
-          <UserProvider>
-            <LayoutWrapper>{children}</LayoutWrapper>
-          </UserProvider>
-        </CryptoProvider>
+        <ErrorBoundary>
+          <CryptoProvider>
+            <UserProvider>
+              <LayoutWrapper>{children}</LayoutWrapper>
+            </UserProvider>
+          </CryptoProvider>
+        </ErrorBoundary>
+        <ToastContainer {...toastConfig}/>
       </body>
     </html>
   );
@@ -69,7 +77,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
         if (!apiUrl) {
-          console.error('NEXT_PUBLIC_API_URL is not configured');
           return;
         }
 
@@ -82,12 +89,10 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           setUser(data);
         } else if (response.status === 401 || response.status === 403) {
           // Not authenticated, which is expected on public pages
-          console.log('User not authenticated');
         } else {
-          console.error('Failed to fetch user:', response.status, response.statusText);
+          // Silent error
         }
-      } catch (err) {
-        console.error('Failed to fetch user:', err);
+      } catch {
       }
     };
 
@@ -98,7 +103,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-screen">
       {/* Navbar */}
-      <nav className="bg-white border-b border-gray-800 px-4 py-2.5 fixed left-0 right-0 top-0 z-50 bg-background">
+      <nav className="border-b border-gray-800 px-4 py-2.5 fixed left-0 right-0 top-0 z-50 bg-background">
             <div className="flex flex-wrap justify-between items-center">
               <div className="flex justify-start items-center">
                 <Link href="/inbox" className="flex items-center gap-2 mr-4">
@@ -162,12 +167,12 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                               method: 'POST',
                               credentials: 'include',
                             });
-                          } catch (err) {
-                            console.error('Logout failed:', err);
+                          } catch {
+                            // Silent error
                           }
                           window.location.href = '/login';
                         }}
-                        className="flex w-full text-left px-4 py-2 hover:bg-neutral-800 transition cursor-pointer gap-2 block"
+                        className="flex w-full text-left px-4 py-2 hover:bg-neutral-800 transition cursor-pointer gap-2"
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => {
@@ -257,6 +262,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
               onClose={() => setTwoFactorSetupOpen(false)}
               onSuccess={() => {
                 // Refetch user to update 2FA status
+                toast.success("2FA enabled!");
                 const fetchUser = async () => {
                   try {
                     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -267,8 +273,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                       const data = await response.json();
                       setUser(data);
                     }
-                  } catch (err) {
-                    console.error('Failed to fetch user:', err);
+                  } catch {
+                    toast.error("Update failed! Refresh page")
                   }
                 };
                 fetchUser();

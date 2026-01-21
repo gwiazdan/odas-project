@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { useUserContext } from '@/context/UserContext';
+import Image from 'next/image';
 
 interface TwoFactorSetupProps {
   onClose: () => void;
@@ -10,10 +11,9 @@ interface TwoFactorSetupProps {
 }
 
 export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupProps) {
-  const { user } = useUserContext();
+  const { user, csrfToken } = useUserContext();
   const [step, setStep] = useState<'loading' | 'scan' | 'verify' | 'backup-codes' | 'disable-confirm'>('loading');
   const [tempSecret, setTempSecret] = useState('');
-  const [otpauthUrl, setOtpauthUrl] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
@@ -21,21 +21,15 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    // Check if 2FA is already enabled
-    if (user?.is_2fa_enabled) {
-      setStep('disable-confirm');
-    } else {
-      initiate2FA();
-    }
-  }, [user?.is_2fa_enabled]);
-
-  const initiate2FA = async () => {
+  const initiate2FA = useCallback(async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
       const response = await fetch(`${apiUrl}/api/v1/auth/2fa/initiate`, {
         method: 'POST',
         credentials: 'include',
+        headers: {
+          ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
+        },
       });
 
       if (!response.ok) {
@@ -44,7 +38,6 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
 
       const data = await response.json();
       setTempSecret(data.temp_secret);
-      setOtpauthUrl(data.otpauth_url);
 
       // Generate QR code
       const qrData = await QRCode.toDataURL(data.otpauth_url, {
@@ -53,12 +46,20 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
       });
       setQrDataUrl(qrData);
       setStep('scan');
-    } catch (err) {
-      console.error('Failed to initiate 2FA:', err);
+    } catch {
       setError('Failed to start 2FA setup. Please try again.');
       setStep('scan');
     }
-  };
+  }, [csrfToken]);
+
+  useEffect(() => {
+    // Check if 2FA is already enabled
+    if (user?.is_2fa_enabled) {
+      setStep('disable-confirm');
+    } else {
+      initiate2FA();
+    }
+  }, [user?.is_2fa_enabled, initiate2FA]);
 
   const handleVerify = async () => {
     setError('');
@@ -73,7 +74,10 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
       const response = await fetch(`${apiUrl}/api/v1/auth/2fa/activate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
+        },
         credentials: 'include',
         body: JSON.stringify({
           temp_secret: tempSecret,
@@ -88,7 +92,12 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
           if (typeof data.detail === 'string') {
             errorMessage = data.detail;
           } else if (Array.isArray(data.detail)) {
-            errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
+            errorMessage = data.detail.map((err: unknown) => {
+              if (typeof err === 'object' && err !== null && 'msg' in err) {
+                return (err as { msg: string }).msg;
+              }
+              return JSON.stringify(err);
+            }).join(', ');
           } else {
             errorMessage = JSON.stringify(data.detail);
           }
@@ -100,8 +109,7 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
       const data = await response.json();
       setBackupCodes(data.backup_codes);
       setStep('backup-codes');
-    } catch (err) {
-      console.error('Failed to verify code:', err);
+    } catch {
       setError('An error occurred. Please try again.');
     } finally {
       setLoading(false);
@@ -127,7 +135,10 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
       const response = await fetch(`${apiUrl}/api/v1/auth/2fa/disable`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
+        },
         credentials: 'include',
         body: JSON.stringify({
           totp_code: disableCode,
@@ -141,7 +152,12 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
           if (typeof data.detail === 'string') {
             errorMessage = data.detail;
           } else if (Array.isArray(data.detail)) {
-            errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
+            errorMessage = data.detail.map((err: unknown) => {
+              if (typeof err === 'object' && err !== null && 'msg' in err) {
+                return (err as { msg: string }).msg;
+              }
+              return JSON.stringify(err);
+            }).join(', ');
           } else {
             errorMessage = JSON.stringify(data.detail);
           }
@@ -154,8 +170,7 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
         onSuccess();
       }
       onClose();
-    } catch (err) {
-      console.error('Failed to disable 2FA:', err);
+    } catch {
       setError('Failed to disable 2FA. Please try again.');
     } finally {
       setLoading(false);
@@ -281,7 +296,7 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
 
                 {qrDataUrl && (
                   <div className="flex justify-center">
-                    <img src={qrDataUrl} alt="QR Code" className="rounded-lg border-4 border-gray-700" />
+                    <Image src={qrDataUrl} width={256} height={256} alt="QR Code" className="rounded-lg border-4 border-gray-700" />
                   </div>
                 )}
 
@@ -333,7 +348,7 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
                   onKeyDown={handleKeyPress}
                   placeholder="000000"
                   maxLength={6}
-                  className="w-full max-w-xs mx-auto px-4 py-3 bg-neutral-800 border border-gray-600 rounded-md text-white text-center text-2xl tracking-widest placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="w-full max-w-xs mx-auto px-4 py-3 bg-neutral-800 border border-gray-600 rounded-md text-white text-center text-2xl tracking-widest placeholder-gray-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white"
                   disabled={loading}
                   autoFocus
                 />
@@ -366,7 +381,7 @@ export default function TwoFactorSetup({ onClose, onSuccess }: TwoFactorSetupPro
             <div className="space-y-6">
               <div className="bg-yellow-900/20 border border-yellow-600 rounded-md p-4">
                 <div className="flex items-start gap-3">
-                  <svg className="w-6 h-6 text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-6 h-6 text-yellow-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                   <div>

@@ -18,6 +18,12 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+.sr-only {
+  position: absolute;
+  left: -5000px;
+  top: -5000px;
+  overflow: hidden;
+}
 .bg-background {
   background-color: var(--background);
 }

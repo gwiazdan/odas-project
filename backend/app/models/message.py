@@ -6,8 +6,8 @@ from sqlmodel import Field, SQLModel
 class MessageBase(SQLModel):
     """Base message fields."""
 
-    encrypted_payload_recipient: str
-    encrypted_payload_sender: str
+    encrypted_payload_recipient: str | None = None
+    encrypted_payload_sender: str | None = None
     signature: str
 
 
@@ -41,14 +41,8 @@ class MessageRead(SQLModel):
     id: int
     sender_id: int
     recipient_id: int
-    encrypted_payload_recipient: str
-    encrypted_payload_sender: str
-    signature: str
-    is_read: bool
-    created_at: datetime
-    read_at: datetime | None
-    encrypted_payload_recipient: str
-    encrypted_payload_sender: str
+    encrypted_payload_recipient: str | None
+    encrypted_payload_sender: str | None
     signature: str
     is_read: bool
     created_at: datetime

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.core.config import settings
 from app.core.logger import logger
 
 try:
@@ -19,16 +21,13 @@ except ImportError:
 
 redis_client: redis.Redis | None = None
 
-SESSION_TIMEOUT_MINUTES = 60 * 24  # 24 hours
-SESSION_ID_LENGTH = 32
-REDIS_SESSION_PREFIX = "session:"
-
 
 @dataclass
 class SessionData:
     """Server-side session data."""
 
     user_id: int
+    csrf_token: str
     created_at: datetime
     last_activity: datetime
     ip_address: str | None = None
@@ -38,6 +37,7 @@ class SessionData:
         """Convert to dictionary for JSON serialization."""
         return {
             "user_id": self.user_id,
+            "csrf_token": self.csrf_token,
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
             "ip_address": self.ip_address,
@@ -45,10 +45,11 @@ class SessionData:
         }
 
     @staticmethod
-    def from_dict(data: dict) -> "SessionData":
+    def from_dict(data: dict) -> SessionData:
         """Create from dictionary."""
         return SessionData(
             user_id=data["user_id"],
+            csrf_token=data["csrf_token"],
             created_at=datetime.fromisoformat(data["created_at"]),
             last_activity=datetime.fromisoformat(data["last_activity"]),
             ip_address=data.get("ip_address"),
@@ -57,7 +58,9 @@ class SessionData:
 
     def is_expired(self) -> bool:
         """Check if session has expired."""
-        expiry_time = self.created_at + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+        expiry_time = self.created_at + timedelta(
+            minutes=settings.SESSION_TIMEOUT_MINUTES
+        )
         return datetime.now(timezone.utc) > expiry_time
 
     def update_activity(self) -> None:
@@ -65,32 +68,64 @@ class SessionData:
         self.last_activity = datetime.now(timezone.utc)
 
 
-def init_redis(url: str = "redis://localhost:6379/0") -> None:
-    """Initialize Redis connection. App fails to start if Redis is unavailable."""
+def _get_redis_client() -> redis.Redis:
+    """
+    Lazy initialization of Redis client.
+    Each worker process will initialize on first use.
+    """
     global redis_client
+
+    if redis_client is not None:
+        return redis_client
 
     if not REDIS_AVAILABLE:
         raise RuntimeError("Redis library is not installed; cannot manage sessions")
 
-    try:
-        redis_client = redis.from_url(url, decode_responses=True)
-        redis_client.ping()
-        logger.info("Connected to Redis for session management")
-    except Exception as exc:
-        redis_client = None
-        logger.critical(
-            "Could not connect to Redis", extra={"redis_url": url, "error": str(exc)}
-        )
-        raise
+    last_error = None
+    for attempt in range(1, 6):  # 5 retries
+        try:
+            client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            client.ping()
+            redis_client = client
+            logger.info(
+                f"Connected to Redis for session management (attempt {attempt})"
+            )
+            return redis_client
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                f"Redis connection attempt {attempt}/5 failed",
+                extra={"error": str(exc)},
+            )
+            if attempt < 5:
+                time.sleep(2.0)
+
+    # All retries failed
+    logger.critical(
+        f"Could not connect to Redis after 5 attempts",
+        extra={"redis_url": settings.REDIS_URL, "error": str(last_error)},
+    )
+    raise RuntimeError(f"Redis connection failed: {last_error}")
+
+
+def init_redis(max_retries: int = 5, retry_delay: float = 2.0) -> None:
+    """
+    Initialize Redis connection with retry logic.
+
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Seconds to wait between retries
+    """
+    _get_redis_client()
 
 
 def create_session(
     user_id: int,
     ip_address: str | None = None,
     user_agent: str | None = None,
-) -> str:
+) -> tuple[str, str]:
     """
-    Create a new session and return session ID.
+    Create a new session and return session ID and CSRF token.
 
     Args:
         user_id: User ID
@@ -98,30 +133,31 @@ def create_session(
         user_agent: Client User-Agent header
 
     Returns:
-        Session ID (to be stored in httpOnly cookie)
+        Tuple of (session_id, csrf_token)
     """
-    if not redis_client:
-        raise RuntimeError("Redis is not initialized; sessions cannot be created")
+    client = _get_redis_client()
 
-    session_id = secrets.token_urlsafe(SESSION_ID_LENGTH)
+    session_id = secrets.token_urlsafe(settings.SESSION_ID_LENGTH)
+    csrf_token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
 
     session_data = SessionData(
         user_id=user_id,
+        csrf_token=csrf_token,
         created_at=now,
         last_activity=now,
         ip_address=ip_address,
         user_agent=user_agent,
     )
 
-    ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
-    redis_client.setex(
-        REDIS_SESSION_PREFIX + session_id,
+    ttl_seconds = settings.SESSION_TIMEOUT_MINUTES * 60
+    client.setex(
+        settings.REDIS_SESSION_PREFIX + session_id,
         ttl_seconds,
         json.dumps(session_data.to_dict()),
     )
 
-    return session_id
+    return session_id, csrf_token
 
 
 def get_session(session_id: str) -> SessionData | None:
@@ -131,10 +167,9 @@ def get_session(session_id: str) -> SessionData | None:
     Returns:
         SessionData if valid and not expired, None otherwise
     """
-    if not redis_client:
-        raise RuntimeError("Redis is not initialized; sessions cannot be read")
+    client = _get_redis_client()
 
-    data = redis_client.get(REDIS_SESSION_PREFIX + session_id)
+    data = client.get(settings.REDIS_SESSION_PREFIX + session_id)
 
     if data is None:
         return None
@@ -146,9 +181,9 @@ def get_session(session_id: str) -> SessionData | None:
         return None
 
     session_data.update_activity()
-    ttl_seconds = SESSION_TIMEOUT_MINUTES * 60
-    redis_client.setex(
-        REDIS_SESSION_PREFIX + session_id,
+    ttl_seconds = settings.SESSION_TIMEOUT_MINUTES * 60
+    client.setex(
+        settings.REDIS_SESSION_PREFIX + session_id,
         ttl_seconds,
         json.dumps(session_data.to_dict()),
     )
@@ -163,10 +198,8 @@ def delete_session(session_id: str) -> bool:
     Returns:
         True if session was deleted, False if not found
     """
-    if not redis_client:
-        raise RuntimeError("Redis is not initialized; sessions cannot be deleted")
-
-    deleted = redis_client.delete(REDIS_SESSION_PREFIX + session_id)
+    client = _get_redis_client()
+    deleted = client.delete(settings.REDIS_SESSION_PREFIX + session_id)
     return deleted > 0
 
 
