@@ -49,18 +49,17 @@ def generate_rsa_keypair() -> tuple[str, str]:
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
-
-    public_pem = (
-        private_key.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        .decode("utf-8")
     )
 
-    return private_pem, public_pem
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    return (
+        base64.b64encode(private_pem).decode(),
+        base64.b64encode(public_pem).decode(),
+    )
 
 
 # Private key encryption (PBKDF2 + AES-GCM)

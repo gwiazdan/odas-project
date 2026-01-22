@@ -12,12 +12,10 @@ class LoggerConfig:
             self._setup_logging()
 
     def _setup_logging(self):
-        # Format
         formatter = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
         )
 
-        # Console Handler
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(formatter)
 

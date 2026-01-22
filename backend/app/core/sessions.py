@@ -82,7 +82,7 @@ def _get_redis_client() -> redis.Redis:
         raise RuntimeError("Redis library is not installed; cannot manage sessions")
 
     last_error = None
-    for attempt in range(1, 6):  # 5 retries
+    for attempt in range(1, 6):
         try:
             client = redis.from_url(settings.REDIS_URL, decode_responses=True)
             client.ping()
@@ -108,13 +108,9 @@ def _get_redis_client() -> redis.Redis:
     raise RuntimeError(f"Redis connection failed: {last_error}")
 
 
-def init_redis(max_retries: int = 5, retry_delay: float = 2.0) -> None:
+def init_redis() -> None:
     """
     Initialize Redis connection with retry logic.
-
-    Args:
-        max_retries: Maximum number of connection attempts
-        retry_delay: Seconds to wait between retries
     """
     _get_redis_client()
 
@@ -168,8 +164,9 @@ def get_session(session_id: str) -> SessionData | None:
         SessionData if valid and not expired, None otherwise
     """
     client = _get_redis_client()
+    key = settings.REDIS_SESSION_PREFIX + session_id
 
-    data = client.get(settings.REDIS_SESSION_PREFIX + session_id)
+    data = client.get(key)
 
     if data is None:
         return None
@@ -183,7 +180,7 @@ def get_session(session_id: str) -> SessionData | None:
     session_data.update_activity()
     ttl_seconds = settings.SESSION_TIMEOUT_MINUTES * 60
     client.setex(
-        settings.REDIS_SESSION_PREFIX + session_id,
+        key,
         ttl_seconds,
         json.dumps(session_data.to_dict()),
     )
@@ -199,17 +196,6 @@ def delete_session(session_id: str) -> bool:
         True if session was deleted, False if not found
     """
     client = _get_redis_client()
-    deleted = client.delete(settings.REDIS_SESSION_PREFIX + session_id)
+    key = settings.REDIS_SESSION_PREFIX + session_id
+    deleted = client.delete(key)
     return deleted > 0
-
-
-def cleanup_expired_sessions() -> int:
-    """
-    Clean up expired sessions.
-    Note: Redis handles automatic expiration via TTL, so this is mostly for manual cleanup.
-
-    Returns:
-        Number of sessions deleted
-    """
-    # Redis automatically expires keys via TTL
-    return 0

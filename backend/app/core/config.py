@@ -1,3 +1,4 @@
+import regex
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,8 +9,10 @@ class Settings(BaseSettings):
         env_file="../.env",
         env_ignore_empty=True,
         extra="ignore",
+        ignored_types=(int, str, bool, object),
     )
 
+    # Project Info
     PROJECT_NAME: str = "SecureMessage"
     PROJECT_VERSION: str = "1.0.0"
     DESCRIPTION: str = "Backend API for SecureMessage application"
@@ -28,6 +31,7 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Sessions
     SESSION_COOKIE_NAME: str = "sessionId"
     SESSION_TIMEOUT_MINUTES: int = 60 * 24
     SESSION_ID_LENGTH: int = 32
@@ -44,6 +48,17 @@ class Settings(BaseSettings):
     RSA_PUBLIC_EXPONENT: int = 65537
     PBKDF2_ITERATIONS: int = 480000
     PBKDF2_SALT_SIZE: int = 32
+
+    # Authentication
+    MIN_PASSWORD_LENGTH = 8
+    MAX_PASSWORD_LENGTH = 128
+    PENDING_LOGIN_TTL_SECONDS = 300
+
+    # Regex
+    EMAIL_REGEX = regex.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    NAME_REGEX = regex.compile(
+        r"^[\p{L}\s\'\-\u2013]{2,50}$", regex.UNICODE | regex.IGNORECASE
+    )
 
 
 settings = Settings()

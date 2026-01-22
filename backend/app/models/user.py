@@ -22,15 +22,15 @@ class User(UserBase, table=True):
     """User database model with RSA key support."""
 
     id: int | None = Field(default=None, primary_key=True)
-    hashed_password: str  # Argon2id
+    hashed_password: str
 
-    public_key: str  # PEM format (public key for recipients to encrypt messages)
-    encrypted_private_key: str  # PBKDF2 encrypted private key (base64)
-    pbkdf2_salt: str  # Salt for PBKDF2 (base64)
+    public_key: str
+    encrypted_private_key: str
+    pbkdf2_salt: str
 
     totp_secret: str | None = None
     is_2fa_enabled: bool = False
-    backup_codes: str | None = None  # JSON-encoded list of hashed backup codes
+    backup_codes: str | None = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

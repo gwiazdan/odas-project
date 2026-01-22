@@ -1,4 +1,4 @@
-"""Message routes - encrypted messaging with RSA."""
+"""Message routes"""
 
 # ENDPOINTS:
 # POST   /messages/send          - Send an encrypted message to recipient
@@ -8,111 +8,33 @@
 # DELETE /messages/{message_id}  - Delete message for current user
 # PUT    /messages/{message_id}/mark-as-read - Mark message as read
 # POST   /messages/bulk-delete   - Delete multiple messages at once
+#
+# POST /auth/2fa/initiate       - Generate TOTP secret + otpauth URI
+# POST /auth/2fa/activate       - Verify TOTP → enable 2FA + backup codes
+# POST /auth/2fa/disable        - Verify TOTP/backup → disable 2FA
+# POST /auth/login/verify-2fa   - pending_token + TOTP/backup → session cookie
 
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.v1.routes.auth import get_current_user
-from app.core.db import get_session
+from app.core.db import get_db_session
 from app.models.message import Message, MessageRead
 from app.models.user import User, UserRead
+from app.schemas.messages import (
+    BulkDeleteRequest,
+    DecryptedMessageRead,
+    InboxMessagePreview,
+    InboxResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+    SentMessagePreview,
+    SentResponse,
+)
 
 router = APIRouter(prefix="/messages", tags=["messages"])
-
-
-class MessagePayload(BaseModel):
-    """Decrypted message payload structure."""
-
-    subject: str
-    content: str
-    attachments: list[dict] = []
-
-
-class SendMessageRequest(BaseModel):
-    """Request to send an encrypted message."""
-
-    recipient_id: int
-    payload_recipient: str
-    payload_sender: str
-    signature: str
-
-
-class SendMessageResponse(BaseModel):
-    """Response after sending message."""
-
-    id: int
-    sender_id: int
-    recipient_id: int
-    created_at: datetime
-
-
-class InboxMessagePreview(BaseModel):
-    """Preview of inbox message for list view."""
-
-    id: int
-    sender_id: int
-    sender_username: str
-    encrypted_payload: str  # Full encrypted payload for frontend decryption
-    signature: str
-    sender_public_key: str
-    is_read: bool
-    created_at: datetime
-
-
-class SentMessagePreview(BaseModel):
-    """Preview of sent message for list view."""
-
-    id: int
-    recipient_id: int
-    recipient_username: str
-    encrypted_payload: str  # Full encrypted payload for frontend decryption
-    signature: str
-    sender_public_key: str
-    is_read: bool
-    created_at: datetime
-
-
-class InboxResponse(BaseModel):
-    """Paginated inbox response."""
-
-    messages: list[InboxMessagePreview]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-
-
-class SentResponse(BaseModel):
-    """Paginated sent messages response."""
-
-    messages: list[SentMessagePreview]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-
-
-class BulkDeleteRequest(BaseModel):
-    """Request to delete multiple messages."""
-
-    message_ids: list[int]
-
-
-class DecryptedMessageRead(BaseModel):
-    """Message with encrypted payload (frontend decrypts it)."""
-
-    id: int
-    sender_id: int
-    sender: UserRead
-    recipient_id: int
-    payload: str  # Encrypted payload as base64 string - frontend decrypts this
-    signature: str
-    is_read: bool
-    created_at: datetime
-    read_at: datetime | None
 
 
 def verify_recipient_exists(
@@ -135,7 +57,7 @@ def verify_recipient_exists(
 def send_message(
     send_request: SendMessageRequest,
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
 ) -> Message:
     """Send an encrypted message with all data (subject, content, attachments) in payload."""
     verify_recipient_exists(send_request.recipient_id, db_session)
@@ -165,7 +87,7 @@ def send_message(
 @router.get("/inbox", response_model=InboxResponse)
 def get_inbox(
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50),
 ) -> InboxResponse:
@@ -194,7 +116,6 @@ def get_inbox(
     )
     messages = db_session.exec(statement).all()
 
-    # Build preview list
     previews = []
     for msg in messages:
         sender = db_session.get(User, msg.sender_id)
@@ -224,7 +145,7 @@ def get_inbox(
 @router.get("/sent", response_model=SentResponse)
 def get_sent(
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50),
 ) -> SentResponse:
@@ -236,11 +157,9 @@ def get_sent(
     )
     total = len(db_session.exec(count_statement).all())
 
-    # Calculate pagination
     skip = (page - 1) * page_size
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
 
-    # Get messages
     statement = (
         select(Message)
         .where(
@@ -253,7 +172,6 @@ def get_sent(
     )
     messages = db_session.exec(statement).all()
 
-    # Build preview list
     previews = []
     for msg in messages:
         recipient = db_session.get(User, msg.recipient_id)
@@ -284,7 +202,7 @@ def get_sent(
 def get_message(
     message_id: int,
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
 ) -> DecryptedMessageRead:
     """
     Get a specific message and decrypt it.
@@ -352,9 +270,9 @@ def get_message(
     return DecryptedMessageRead(
         id=message.id,
         sender_id=message.sender_id,
-        sender=UserRead.from_orm(sender),
+        sender=UserRead.model_validate(sender),
         recipient_id=message.recipient_id,
-        payload=encrypted_payload,  # Return encrypted string directly
+        payload=encrypted_payload,
         signature=message.signature,
         is_read=message.is_read,
         created_at=message.created_at,
@@ -366,7 +284,7 @@ def get_message(
 def delete_message(
     message_id: int,
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
 ) -> None:
     """
     Delete a message for current user.
@@ -423,7 +341,7 @@ def delete_message(
 def mark_as_read(
     message_id: int,
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
 ) -> Message:
     """Mark message as read."""
     message = db_session.get(Message, message_id)
@@ -454,7 +372,7 @@ def mark_as_read(
 def bulk_delete_messages(
     delete_request: BulkDeleteRequest,
     current_user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_session),
+    db_session: Session = Depends(get_db_session),
 ) -> dict:
     """
     Delete multiple messages for current user.
